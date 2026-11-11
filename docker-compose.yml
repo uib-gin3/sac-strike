@@ -11,8 +11,6 @@
 x-environment: &node-environment
   USE_REDIS: "1"
   STRIKE_ETCD: etcd:2379
-  # No colleague list: every node registers itself in etcd
-  # (strike/workforce/<hostname>) and reads the workforce from there.
   STRIKE_LEADING_OVERHEAD: ${STRIKE_LEADING_OVERHEAD:-0.1}
   STRIKE_ALGORITHM: ${STRIKE_ALGORITHM:-random}
   STRIKE_MIN_TIME: ${STRIKE_MIN_TIME:-2}
