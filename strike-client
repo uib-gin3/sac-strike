@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+
+# This file has been implemented with GLM-5.3-Flash on OpenCode
+
+# strike-client: command line client for the calculators' workforce.
+#
+# Same shape as restad-client, but it does not aim at a fixed server:
+# every request is sent to whoever etcd says is the leader at that
+# moment (the sessions live in shared redis, so any node can serve any
+# calculus). It creates a calculus with the given numbers, applies the
+# operation and prints the result. Standard library only.
+#
+# Examples:
+#
+#     ./strike-client -o add 3 4 5
+#     ./strike-client -o mean 1 2 3 4
+#     ./strike-client -o sqrt 49
+#     ./strike-client -v -o mult 2 3
+
+import argparse
+import http.client
+import sys
+
+import strikeapi
+
+
+def format_operand(value):
+    """ Format an operand so the server is able to parse it.
+
+    " The server only understands plain decimal notation, so no
+    " scientific notation here: 1e-05 would be rejected with a 400.
+    """
+
+    number = float(value)
+
+    if number.is_integer():
+        return str(int(number))
+
+    text = repr(number)
+
+    if 'e' in text or 'E' in text:
+        text = f"{number:f}"
+
+    return text
+
+
+def discover(args):
+    """ The host port of whoever leads right now. """
+
+    port = strikeapi.leader_port(args.etcd, args.nodes, args.port_base)
+    if port is None:
+        raise http.client.HTTPException("no leader in etcd "
+                                        "(is the workforce running?)")
+    return port
+
+
+def send(args, method, path, body=None):
+    """ One request to the current leader, accounted for. """
+
+    port = discover(args)
+    if args.verbose:
+        print(f"> leader: http://localhost:{port}", file=sys.stderr)
+
+    status, headers, data = strikeapi.req(port, method, path, body,
+                                          timeout=args.timeout,
+                                          verbose=args.verbose)
+    return status, headers, data.decode('utf-8', errors='replace')
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='strike-client',
+        description="Send numbers and an operation to the leader of the "
+                    "calculators' workforce, discovered through etcd.")
+    parser.add_argument('-o', '--op', default='add', choices=strikeapi.OPERATIONS,
+                        help="operation to apply (default: add)")
+    parser.add_argument('-i', '--calc-id',
+                        help="use an existing calculus instead of creating a new one")
+    parser.add_argument('--put', action='store_true',
+                        help="create the calculus with the chosen id (PUT /calc/<id>)")
+    parser.add_argument('-c', '--consolidate', action='store_true',
+                        help="keep the result in the calculus (POST instead of GET)")
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help="show the HTTP conversation")
+    parser.add_argument('-t', '--timeout', type=float, default=10.0,
+                        help="socket timeout in seconds (default: 10)")
+    parser.add_argument('--nodes', type=int, default=5,
+                        help="number of nodes in the workforce (default: 5)")
+    parser.add_argument('--port-base', type=int, default=12345,
+                        help="host port of node1, following nodes +1 "
+                             "(default: 12345)")
+    parser.add_argument('--etcd', default='127.0.0.1:2379',
+                        help="etcd address as seen from here "
+                             "(default: 127.0.0.1:2379)")
+    parser.add_argument('numbers', nargs='*', type=float, metavar='N',
+                        help="operands of the operation")
+    args = parser.parse_args()
+
+    if args.put and not args.calc_id:
+        parser.error("--put needs a calculus id (-i/--calc-id)")
+
+    operands = ','.join(format_operand(number) for number in args.numbers)
+
+    try:
+        if args.calc_id:
+            calc_id = args.calc_id
+            if args.put:
+                # The user chooses the id, so the calculus is created
+                # (or overwritten, PUT is idempotent) with it.
+                status, _, text = send(args, 'PUT', f'/calc/{calc_id}',
+                                       operands.encode())
+                if status != 201:
+                    raise http.client.HTTPException(
+                        f"cannot create the calculus: {status} {text}")
+            elif operands:
+                # The calculus already exists, so the operands are
+                # added to it (PATCH) instead of creating a new one.
+                status, _, text = send(args, 'PATCH', f'/calc/{calc_id}',
+                                       operands.encode())
+                if status != 200:
+                    raise http.client.HTTPException(
+                        f"cannot add the operands: {status} {text}")
+        else:
+            status, _, text = send(args, 'POST', '/calc', operands.encode())
+            if status != 201:
+                raise http.client.HTTPException(
+                    f"cannot create the calculus: {status} {text}")
+            calc_id = text.strip()
+
+        method = 'POST' if args.consolidate else 'GET'
+        status, headers, text = send(args, method, f'/calc/{calc_id}/{args.op}')
+
+    except (OSError, http.client.HTTPException) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(text)
+
+    if not 200 <= status < 300 or text.startswith("Error"):
+        return 1
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

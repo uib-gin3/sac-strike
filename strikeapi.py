@@ -14,11 +14,15 @@ import http.client
 import json
 import os
 import socket
+import sys
 import time
 import urllib.request
 from urllib.parse import urlsplit
 
 LEADER_KEY = 'strike/leader'
+
+# The operations the calculator understands.
+OPERATIONS = ('add', 'sub', 'div', 'mult', 'sqrt', 'mean', 'std')
 
 # The shared clock: strike-demo exports STRIKE_T0 so every tool narrates
 # on the same timeline. A tool run standalone falls back to its own start.
@@ -117,10 +121,16 @@ def leader_name(etcd):
     return urlsplit(endpoint).hostname if endpoint else None
 
 
-def req(port, method, path, body=None, timeout=5.0):
+def req(port, method, path, body=None, timeout=5.0, verbose=False):
     """ One plain HTTP request to localhost:port, returns (status, headers,
-    " body). Headers come lowercased in a dict.
+    " body). Headers come lowercased in a dict. With verbose=True the
+    " conversation goes to stderr, like restadapi does.
     """
+
+    if verbose:
+        print(f"> {method} {path} HTTP/1.1", file=sys.stderr)
+        if body:
+            print(f"> {body.decode('utf-8', errors='replace')}", file=sys.stderr)
 
     conn = http.client.HTTPConnection('127.0.0.1', port, timeout=timeout)
     try:
@@ -128,9 +138,47 @@ def req(port, method, path, body=None, timeout=5.0):
                      headers={'Content-Type': 'text/plain; charset=utf-8'}
                      if body else {})
         raw = conn.getresponse()
-        return raw.status, {k.lower(): v for k, v in raw.getheaders()}, raw.read()
+        data = raw.read()
+
+        if verbose:
+            print(f"< HTTP/1.1 {raw.status} {raw.reason}", file=sys.stderr)
+            for name, value in raw.getheaders():
+                print(f"< {name}: {value}", file=sys.stderr)
+            if data:
+                print(f"< {data.decode('utf-8', errors='replace')}",
+                      file=sys.stderr)
+
+        return raw.status, {k.lower(): v for k, v in raw.getheaders()}, data
     finally:
         conn.close()
+
+
+def leader_endpoint(etcd, retries=8, pause=0.25):
+    """ The raw endpoint of the leader, retrying the sub-second gaps.
+
+    " The guardian keeps a leader elected at all times, but between a
+    " lease expiring and the next claim there can be a brief gap: read
+    " again instead of answering nothing.
+    """
+
+    for _ in range(retries):
+        try:
+            endpoint = etcd_get(etcd, LEADER_KEY)
+        except OSError:
+            endpoint = None
+        if endpoint:
+            return endpoint
+        time.sleep(pause)
+    return None
+
+
+def leader_port(etcd, count, port_base, retries=8, pause=0.25):
+    """ The host port of the current leader (nodeN maps to port_base+N-1). """
+
+    endpoint = leader_endpoint(etcd, retries, pause)
+    if endpoint is None:
+        return None
+    return nodes(count, port_base).get(urlsplit(endpoint).hostname)
 
 
 def nodes(count, port_base):

@@ -21,8 +21,6 @@ import time
 
 import strikeapi
 
-OPS = ('add', 'sub', 'div', 'mult', 'sqrt', 'mean', 'std')
-
 
 class Striker(threading.Thread):
     """ One simulated user: keeps asking the current leader.
@@ -99,7 +97,7 @@ class Striker(threading.Thread):
     def payload(self):
         """ The operation and the operands of the next request. """
 
-        op = random.choice(OPS)
+        op = random.choice(strikeapi.OPERATIONS)
         count = 1 if op == 'sqrt' else random.randint(20, 50)
         return op, [random.randint(1, 100) for _ in range(count)]
 
@@ -118,7 +116,7 @@ class Striker(threading.Thread):
             second = self.do('GET', f'/calc/{calc_id}/{op}')
             if second is None or second[0] != 200:
                 return
-            who = second[1].get('x-served-by')
+            who = second[1].get('x-calculated-by')
             if who:
                 self.served_by[who] = self.served_by.get(who, 0) + 1
             self.served += 1
@@ -213,7 +211,7 @@ def client_report(args, strikers, elapsed):
         for node, count in striker.served_by.items():
             client_view[node] = client_view.get(node, 0) + count
     if client_view:
-        print("client view (X-Served-By): "
+        print("client view (X-Calculated-By): "
               + ', '.join(f"{node}: {count}"
                           for node, count in sorted(client_view.items())))
 

@@ -79,11 +79,12 @@ Unix style: every tool is useful on its own, open a few terminals and
 mix them as you like.
 
     ./strike-up                      # workforce up, healthy, leader elected
-    ./strike-leader                  # where to send requests: the leader's port
+    ./strike-leader                  # where to send requests: the leader's base URL
     ./strike-load -c 5 -r 3 -d 60    # the users: load and the client report
     ./strike-chaos -d 60             # the agitator: random strikes
     ./strike-watch                   # the storyteller: narrates forever
     ./strike-summary -d 60           # the ledger: what redis recorded
+    ./strike-client -o add 3 4 5     # one operation, leader auto-discovered
     docker compose down
 
 They share one clock: strike-demo exports `STRIKE_T0` and every tool
@@ -99,17 +100,26 @@ of the leader, so asking etcd is enough:
     docker compose exec etcd etcdctl get strike/leader --print-value-only
     # http://node2:12345
 
-`strike-leader` turns that into the port to talk to on the host (the
-compose maps nodeN to 12345+N-1) and retries the sub-second gaps, so
-the manual way is just:
+`strike-leader` turns that into a base URL for the host (the compose
+maps nodeN to 12345+N-1) and retries the sub-second gaps. Inline the
+discovery in every command: if the leader changes (or dies) between
+commands, each one finds whoever leads at that moment, and the calculus
+survives it anyway (sessions live in shared redis, any node can serve
+any calculus):
 
-    PORT=$(./strike-leader)
-    ID=$(curl -s -X POST localhost:$PORT/calc --data-binary 3,4,5,6)
-    curl -s localhost:$PORT/calc/$ID/add
-    # The leader computes it itself or delegates; the X-Served-By and
-    # X-Leaded-By headers tell who did what.
+    ID=$(curl -s -X POST $(./strike-leader)/calc --data-binary 3,4,5,6)
+    curl -v $(./strike-leader)/calc/$ID/add
+    # X-Lead-By: node2         the leader that orchestrated
+    # X-Calculated-By: node5   the node that computed
+    # 18
 
     ./strike-leader --endpoint     # the raw endpoint etcd holds
+
+Or without curl at all, with the discovery built in:
+
+    ./strike-client -o add 3 4 5
+    ./strike-client -o mean 1 2 3 4
+    ./strike-client -v -o sqrt 49
 
 The leader is always there, even on a workforce nobody is talking to: a
 guardian thread in every node repeats the keepalive pass every TTL/3,
@@ -120,7 +130,7 @@ fire on time with zero traffic. Watch it churn:
     watch -n 1 'docker compose exec etcd etcdctl get strike/leader --print-value-only'
 
 Only the sub-second gaps between a lease expiring and the next claim
-are leaderless; strike-leader retries them for you.
+are leaderless; strike-leader and strike-client retry them for you.
 
 The delegation behaviour is tuned with environment variables (see the
 table in the sac-restad README), compose gives them defaults that can be
@@ -157,7 +167,7 @@ etcd and the workforce is whatever etcd says it is.
     teapots (418)   : 15
     errors          : 0 (4xx: 0, 5xx: 0, conn: 0)
     latency         : avg=7.3ms p50=6.1ms p95=14.6ms p99=19.0ms max=27.5ms
-    client view (X-Served-By): node1: 211, node2: 197, node3: 114, ...
+    client view (X-Calculated-By): node1: 211, node2: 197, node3: 114, ...
 
     === what the workforce recorded ===
     duration        : 60.0s
@@ -219,9 +229,10 @@ etcd and the workforce is whatever etcd says it is.
   delegation failures. The per-node counters also feed the robust and
   fastest algorithms; the event log feeds the leader timeline of the
   summary.
-- **Signatures**: every response carries `X-Served-By` (the hostname of
-  the node that computed) and `X-Leaded-By` (the leader that orchestrated,
-  when there was one), so a delegated answer shows both actors.
+- **Signatures**: every response carries `X-Calculated-By` (the hostname
+  of the node that computed) and `X-Lead-By` (the leader that
+  orchestrated, when there was one), so a delegated answer shows both
+  actors.
 
 The containers: one per calculator node, plus one for etcd and one for
 redis. Ports on the host: nodes on 12345..12349, etcd on 2379, redis on

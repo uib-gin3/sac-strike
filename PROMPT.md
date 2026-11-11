@@ -234,3 +234,34 @@ Decisions:
   sub-second gaps), or with the raw endpoint under --endpoint.
 - The README example is now three lines of curl and one substitution;
   the etcdctl line stays to show where the truth lives.
+
+## Interaction 8 — header names, inlined discovery and a client
+
+> "with curl -v I just see the header X-Served-By: node3. I want few
+> things: The headers to be X-Lead-By with the node that leaded the
+> request and instead of X-Served-By to be X-Calculated-By. I want also
+> the example to inline the strike-leader that way if the leader goes
+> down between the first assingation for PORT and the request it still
+> works. Something like curl -v -X POST $(./strike-leader)/... i want
+> strike-leader to return the localhost also. Implement also a simple
+> strike-client similar to restad-client so I can send operations
+> auto-discovering the leader as simple alternative to the curl."
+
+Decisions:
+
+- Headers renamed: `X-Lead-By` (the leader that orchestrated) and
+  `X-Calculated-By` (the node that computed). The internal request-side
+  `X-Delegated-By` stays.
+- `strike-leader` answers with a base URL (`http://localhost:12346`)
+  instead of a bare port, so the discovery is inlined in every curl:
+  `curl -v $(./strike-leader)/calc/$ID/add`. Each command re-discovers,
+  so a leader dying between commands does not matter, and the calculus
+  survives it anyway (sessions live in shared redis).
+- `strike-client`: the restad-client experience aimed at whoever leads,
+  discovered through etcd before every request. Same flags as
+  restad-client (-o, -i, --put, -c, -v, -t, operands), same operand
+  formatting, prints the result, exit 1 on errors.
+- The leader-to-port logic moved into strikeapi (leader_endpoint,
+  leader_port), shared by strike-leader and strike-client; req() grew a
+  verbose mode for the -v conversation; the operations tuple moved to
+  strikeapi too.
