@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+
+# This file has been implemented with GLM-5.3-Flash on OpenCode
+
+# strike-summary: the ledger.
+#
+# Reads the metrics the leader kept in redis (who served what, how long
+# it took, who led, who was struck) and reports. One thing: account for
+# it. The clients' own view is strike-load's business.
+#
+#     ./strike-summary -d 60
+#     ./strike-summary         # the duration is guessed from the events
+
+import argparse
+import json
+import sys
+
+import strikeapi
+
+
+def percentile(sorted_samples, p):
+    if not sorted_samples:
+        return 0.0
+    k = (len(sorted_samples) - 1) * p / 100
+    lo = int(k)
+    hi = min(lo + 1, len(sorted_samples) - 1)
+    return sorted_samples[lo] + (sorted_samples[hi] - sorted_samples[lo]) * (k - lo)
+
+
+def read_metrics(redis_addr, names, end_wall):
+    """ The metrics the leader stored in Redis while serving.
+
+    " end_wall is the wall clock time the run is assumed to have ended:
+    " it closes the tenure of a leader that was still leading.
+    """
+
+    resp = strikeapi.Resp(*redis_addr)
+    try:
+        keys = [k for k in (resp.command('KEYS', 'strike:*') or [])
+                if not k.startswith('strike:events')]
+
+        values = resp.command('MGET', *keys) if keys else []
+        counters = dict(zip(keys, values))
+
+        raw_events = resp.command('LRANGE', 'strike:events', 0, -1) or []
+    finally:
+        resp.close()
+
+    events = []
+    for raw in raw_events:
+        try:
+            events.append(json.loads(raw))
+        except ValueError:
+            pass
+    events.sort(key=lambda event: event.get('t', 0))
+
+    def number(key):
+        value = counters.get(key)
+        return float(value) if value else 0.0
+
+    per_node = {}
+    for node in sorted(set(list(names) +
+                           [k.split(':', 2)[2] for k in counters
+                            if k.startswith('strike:ok:')])):
+        ok = int(number(f"strike:ok:{node}"))
+        fail = int(number(f"strike:fail:{node}"))
+        total = number(f"strike:time:{node}")
+        per_node[node] = {
+            'served': ok,
+            'failed': fail,
+            'avg_ms': total / ok * 1000 if ok else 0.0,
+            'strikes': 0,
+            'burnouts': 0,
+            'tenures': 0,
+            'leading': 0.0,
+        }
+
+    for event in events:
+        node = per_node.setdefault(event['node'], {
+            'served': 0, 'failed': 0, 'avg_ms': 0.0, 'strikes': 0,
+            'burnouts': 0, 'tenures': 0, 'leading': 0.0})
+        if event['kind'] == 'on_strike':
+            node['strikes'] += 1
+        elif event['kind'] == 'burned_out':
+            node['burnouts'] += 1
+
+    # The leadership tenures, rebuilt from the event log: an 'elected'
+    # opens one, a step down or a burnout closes it, the next election
+    # also closes whatever was left open.
+    current = None
+    timeline = []
+    for event in events:
+        kind, node, when = event['kind'], event['node'], event.get('t', 0)
+        if kind == 'elected':
+            if current:
+                timeline.append((current[0], current[1], when))
+            current = (node, when)
+        elif kind in ('stepped_down', 'burned_out') and current \
+                and current[0] == node:
+            timeline.append((current[0], current[1], when))
+            current = None
+    if current:
+        timeline.append((current[0], current[1], end_wall))
+
+    # Tenures are clamped to the end of the run: an election after the
+    # load stopped (a health poll can elect one) does not belong to it.
+    clamped = []
+    for node, start, end in timeline:
+        if end_wall is not None:
+            end = min(end, end_wall)
+            start = min(start, end_wall)
+        if end > start:
+            clamped.append((node, start, end))
+
+    for node, start, end in clamped:
+        if node in per_node:
+            per_node[node]['tenures'] += 1
+            per_node[node]['leading'] += end - start
+
+    return {
+        'events': events,
+        'per_node': per_node,
+        'self_served': int(number('strike:self')),
+        'delegated': int(number('strike:delegated')),
+        'orphans': sum(1 for event in events if event['kind'] == 'orphans'),
+        'timeline': clamped,
+    }
+
+
+def print_summary(args, metrics):
+    events = metrics['events']
+    duration = args.duration if args.duration > 0 else (
+        (events[-1]['t'] - events[0]['t']) if events else 0.0)
+    if not duration and metrics['timeline']:
+        duration = metrics['timeline'][-1][2] - metrics['timeline'][0][1]
+
+    print()
+    print("=== what the workforce recorded ===")
+    print(f"duration        : {duration:.1f}s")
+    handled = metrics['self_served'] + metrics['delegated']
+    if handled:
+        print(f"leader handled  : {handled} reqs (self: {metrics['self_served']} "
+              f"= {metrics['self_served'] / handled * 100:.1f}%, "
+              f"delegated: {metrics['delegated']} "
+              f"= {metrics['delegated'] / handled * 100:.1f}%)")
+    print(f"orphans (503)   : {metrics['orphans']}")
+    print(f"strikes suffered: "
+          f"{sum(stats['strikes'] for stats in metrics['per_node'].values())}")
+
+    print()
+    print("per node (every request as the leader recorded it):")
+    print(f"{'node':<8}{'ok':>7}{'fail':>7}{'avg_ms':>8}"
+          f"{'strikes':>9}{'burnouts':>10}{'leading':>9}{'leader%':>9}")
+    for node, stats in metrics['per_node'].items():
+        share = stats['leading'] / duration * 100 if duration else 0.0
+        print(f"{node:<8}{stats['served']:>7}{stats['failed']:>7}"
+              f"{stats['avg_ms']:>8.1f}{stats['strikes']:>9}"
+              f"{stats['burnouts']:>10}{stats['leading']:>8.1f}s"
+              f"{share:>8.1f}%")
+
+    if metrics['timeline']:
+        print()
+        print("leader timeline:")
+        for node, start, end in metrics['timeline']:
+            print(f"  [{strikeapi.elapsed_at(start):6.1f}s - "
+                  f"{strikeapi.elapsed_at(end):6.1f}s] {node}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='strike-summary',
+        description="Report what the workforce recorded in redis.")
+    parser.add_argument('-d', '--duration', type=float, default=0.0,
+                        help="duration of the run in seconds, 0 to guess "
+                             "it from the event log (default: 0)")
+    parser.add_argument('--nodes', type=int, default=5,
+                        help="number of nodes in the workforce (default: 5)")
+    parser.add_argument('--redis', default='127.0.0.1:6379',
+                        help="redis address as seen from here "
+                             "(default: 127.0.0.1:6379)")
+    args = parser.parse_args()
+
+    names = [f"node{index + 1}" for index in range(args.nodes)]
+    redis_addr = tuple(args.redis.split(':')) if ':' in args.redis \
+        else (args.redis, 6379)
+
+    # When the duration is given (strike-demo passes it) the run is
+    # assumed to have ended STRIKE_T0 + duration, so the tenure of a
+    # leader that was still leading gets closed there.
+    if args.duration > 0:
+        end_wall = strikeapi.wall_at(args.duration)
+    else:
+        end_wall = None
+
+    try:
+        metrics = read_metrics(redis_addr, names, end_wall)
+    except OSError as exc:
+        print(f"cannot read the redis metrics: {exc}", file=sys.stderr)
+        metrics = {'events': [], 'per_node': {}, 'self_served': 0,
+                   'delegated': 0, 'orphans': 0, 'timeline': []}
+
+    print_summary(args, metrics)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)

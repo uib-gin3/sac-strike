@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+
+# This file has been implemented with GLM-5.3-Flash on OpenCode
+
+# strike-load: the users of the calculators.
+#
+# A bunch of clients sending operations to whoever etcd says is the
+# leader: create a calculus, apply an operation, forget it. Teapots and
+# leadership transitions are counted, never retried: that is exactly
+# what the assignment wants to see. One thing: generate load, report
+# what the client saw.
+#
+#     ./strike-load -c 5 -r 3 -d 60
+
+import argparse
+import http.client
+import random
+import sys
+import threading
+import time
+
+import strikeapi
+
+OPS = ('add', 'sub', 'div', 'mult', 'sqrt', 'mean', 'std')
+
+
+class Striker(threading.Thread):
+    """ One simulated user: keeps asking the current leader.
+
+    " etcd says who leads; when an answer is not what the API promises
+    " the user looks for a new leader right away.
+    """
+
+    def __init__(self, node_map, etcd, args, deadline, stop):
+        super().__init__(daemon=True)
+        self.node_map = node_map
+        self.etcd = etcd
+        self.args = args
+        self.deadline = deadline
+        self.stop = stop
+        self.served = 0
+        self.requests = 0
+        self.teapots = 0
+        self.errors_4xx = 0
+        self.errors_5xx = 0
+        self.conn_errors = 0
+        self.latencies = []
+        self.served_by = {}
+        self._leader = None
+        self._leader_when = 0.0
+
+    def leader_port(self):
+        """ The host port of the leader, remembered for half a second. """
+
+        now = time.monotonic()
+        if now - self._leader_when > 0.5:
+            self._leader_when = now
+            try:
+                name = strikeapi.leader_name(self.etcd)
+            except OSError:
+                name = self._leader
+            if name in self.node_map:
+                self._leader = name
+
+        name = self._leader or random.choice(list(self.node_map))
+        return self.node_map[name]
+
+    def invalidate(self):
+        self._leader_when = 0.0
+
+    def do(self, method, path, body=None):
+        """ One request, accounted for. """
+
+        started = time.monotonic()
+        try:
+            status, headers, data = strikeapi.req(self.leader_port(),
+                                                  method, path, body)
+        except (OSError, http.client.HTTPException):
+            self.requests += 1
+            self.conn_errors += 1
+            self.invalidate()
+            return None
+
+        self.requests += 1
+        self.latencies.append(time.monotonic() - started)
+
+        if status == 418:
+            self.teapots += 1
+            self.invalidate()
+        elif status >= 500:
+            self.errors_5xx += 1
+            self.invalidate()
+        elif status >= 400:
+            self.errors_4xx += 1
+            self.invalidate()
+
+        return status, headers, data
+
+    def payload(self):
+        """ The operation and the operands of the next request. """
+
+        op = random.choice(OPS)
+        count = 1 if op == 'sqrt' else random.randint(20, 50)
+        return op, [random.randint(1, 100) for _ in range(count)]
+
+    def operation(self):
+        """ Create the calculus, apply the operation, forget it. """
+
+        op, numbers = self.payload()
+        body = ','.join(str(number) for number in numbers).encode()
+
+        first = self.do('POST', '/calc', body)
+        if first is None or first[0] != 201:
+            return
+        calc_id = first[2].decode().strip()
+
+        try:
+            second = self.do('GET', f'/calc/{calc_id}/{op}')
+            if second is None or second[0] != 200:
+                return
+            who = second[1].get('x-served-by')
+            if who:
+                self.served_by[who] = self.served_by.get(who, 0) + 1
+            self.served += 1
+        finally:
+            self.do('DELETE', f'/calc/{calc_id}')
+
+    def run(self):
+        rng = random.Random()
+        try:
+            while not self.stop.is_set() and time.monotonic() < self.deadline:
+                if self.args.rate > 0:
+                    remaining = self.deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    delay = min(rng.expovariate(self.args.rate), remaining)
+                    if self.stop.wait(delay):
+                        break
+                self.operation()
+        except KeyboardInterrupt:
+            pass
+
+
+def snapshot(clients):
+    return {
+        'served': sum(client.served for client in clients),
+        'requests': sum(client.requests for client in clients),
+        'teapots': sum(client.teapots for client in clients),
+        'errors': sum(client.errors_4xx + client.errors_5xx + client.conn_errors
+                      for client in clients),
+    }
+
+
+def report_progress(clients, interval, deadline, stop):
+    """ One line per interval, like restad-bench does. """
+
+    prev = snapshot(clients)
+    prev_t = time.monotonic()
+    while not stop.wait(interval):
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        cur = snapshot(clients)
+        dt = now - prev_t
+        ops = cur['served'] - prev['served']
+        strikeapi.stamp(f"{ops:4d} ops in {dt:4.1f}s ({ops / dt:6.1f} ops/s) "
+                        f"reqs={cur['requests']} teapots={cur['teapots']} "
+                        f"errors={cur['errors']}")
+        prev, prev_t = cur, now
+
+
+def percentile(sorted_samples, p):
+    if not sorted_samples:
+        return 0.0
+    k = (len(sorted_samples) - 1) * p / 100
+    lo = int(k)
+    hi = min(lo + 1, len(sorted_samples) - 1)
+    return sorted_samples[lo] + (sorted_samples[hi] - sorted_samples[lo]) * (k - lo)
+
+
+def client_report(args, strikers, elapsed):
+    """ What the clients saw, and nothing more. """
+
+    served = sum(client.served for client in strikers)
+    requests = sum(client.requests for client in strikers)
+    teapots = sum(client.teapots for client in strikers)
+    errors_4xx = sum(client.errors_4xx for client in strikers)
+    errors_5xx = sum(client.errors_5xx for client in strikers)
+    conn_errors = sum(client.conn_errors for client in strikers)
+    latencies = sorted(sample for client in strikers
+                       for sample in client.latencies)
+
+    offered = "unlimited" if args.rate == 0 else f"{args.rate} ops/s each"
+
+    print()
+    print("=== what the clients saw ===")
+    print(f"duration        : {elapsed:.1f}s")
+    print(f"offered (approx): {args.clients * args.rate * elapsed:.0f} ops "
+          f"({args.clients} clients x {offered})")
+    print(f"served          : {served} ops / {requests} reqs")
+    print(f"teapots (418)   : {teapots}")
+    print(f"errors          : {errors_4xx + errors_5xx + conn_errors} "
+          f"(4xx: {errors_4xx}, 5xx: {errors_5xx}, conn: {conn_errors})")
+    if latencies:
+        print(f"latency         : avg={sum(latencies) / len(latencies) * 1000:.1f}ms "
+              f"p50={percentile(latencies, 50) * 1000:.1f}ms "
+              f"p95={percentile(latencies, 95) * 1000:.1f}ms "
+              f"p99={percentile(latencies, 99) * 1000:.1f}ms "
+              f"max={latencies[-1] * 1000:.1f}ms")
+
+    client_view = {}
+    for striker in strikers:
+        for node, count in striker.served_by.items():
+            client_view[node] = client_view.get(node, 0) + count
+    if client_view:
+        print("client view (X-Served-By): "
+              + ', '.join(f"{node}: {count}"
+                          for node, count in sorted(client_view.items())))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='strike-load',
+        description="Send operations to whoever etcd says is the leader.")
+    parser.add_argument('-c', '--clients', type=int, default=5,
+                        help="concurrent clients (default: 5)")
+    parser.add_argument('-r', '--rate', type=float, default=3.0,
+                        help="operations per second per client (default: 3)")
+    parser.add_argument('-d', '--duration', type=float, default=60.0,
+                        help="run duration in seconds (default: 60)")
+    parser.add_argument('--nodes', type=int, default=5,
+                        help="number of nodes in the workforce (default: 5)")
+    parser.add_argument('--port-base', type=int, default=12345,
+                        help="host port of node1, following nodes +1 "
+                             "(default: 12345)")
+    parser.add_argument('--etcd', default='127.0.0.1:2379',
+                        help="etcd address as seen from here "
+                             "(default: 127.0.0.1:2379)")
+    args = parser.parse_args()
+
+    if args.clients < 1:
+        parser.error("-c must be >= 1")
+    if args.duration <= 0:
+        parser.error("-d must be > 0")
+
+    node_map = strikeapi.nodes(args.nodes, args.port_base)
+    offered = "unlimited" if args.rate == 0 else f"{args.rate} ops/s each"
+
+    strikeapi.stamp(f"sending load: {args.clients} clients x {offered} "
+                    f"(total {args.clients * args.rate:.1f} ops/s) "
+                    f"for {args.duration:.0f}s")
+
+    stop = threading.Event()
+    started = time.time()
+    deadline = time.monotonic() + args.duration
+    strikers = [Striker(node_map, args.etcd, args, deadline, stop)
+                for _ in range(args.clients)]
+    reporter = threading.Thread(target=report_progress,
+                                args=(strikers, 5.0, deadline, stop),
+                                daemon=True)
+
+    for striker in strikers:
+        striker.start()
+    reporter.start()
+    for striker in strikers:
+        striker.join()
+    stop.set()
+    reporter.join()
+
+    elapsed = time.time() - started
+    client_report(args, strikers, elapsed)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        sys.exit(130)

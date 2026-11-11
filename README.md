@@ -11,10 +11,12 @@ about a minute of beautiful chaos.
 This is the orchestration half of the assignment: the calculator itself is
 [sac-restad](https://github.com/uib-gin3/sac-restad), which grew a
 distributed mode for the occasion. Here there is only Docker Compose to
-deploy the workforce (5 calculator nodes + etcd + redis) and `strike-demo`, a
-single script that starts everything, sends load to the leader, sets the
-chaos monkey loose, narrates what happens and closes with a summary built
-from the metrics stored in Redis.
+deploy the workforce (5 calculator nodes + etcd + redis) and a handful of
+single-purpose commands (strike-up, strike-load, strike-chaos,
+strike-watch, strike-summary) that `strike-demo` composes into the whole
+show: start everything, send load to the leader, set the chaos monkey
+loose, narrate what happens and close with the reports built from what
+the clients saw and from the metrics stored in Redis.
 
 ## Assignment
 
@@ -62,19 +64,51 @@ The one-liner (about 1 minute of tests):
 
     ./strike-demo
 
-It does everything: builds and starts the workforce, waits for the first
-leader, sends load, runs the chaos monkey, narrates and prints the
-summary. Useful options:
+It composes the single-purpose commands: brings the workforce up, waits
+for the first leader, runs the chaos monkey and the storyteller in the
+background, sends load in the foreground, prints the two reports and
+tears the workforce down. Useful options:
 
     ./strike-demo -c 5 -r 3 -d 60    # 5 clients, 3 ops/s each, 60 seconds
     ./strike-demo --skip-up          # the workforce is already running
     ./strike-demo --keep             # leave the workforce running at the end
 
-Or the manual way:
+### The commands, one thing each
 
-    docker compose up -d --build     # etcd + redis + node1..node5
-    curl localhost:12345/calc/...    # node1..node5 answer on 12345..12349
+Unix style: every tool is useful on its own, open a few terminals and
+mix them as you like.
+
+    ./strike-up                      # workforce up, healthy, leader elected
+    ./strike-load -c 5 -r 3 -d 60    # the users: load and the client report
+    ./strike-chaos -d 60             # the agitator: random strikes
+    ./strike-watch                   # the storyteller: narrates forever
+    ./strike-summary -d 60           # the ledger: what redis recorded
     docker compose down
+
+They share one clock: strike-demo exports `STRIKE_T0` and every tool
+narrates `[xx.xs]` on the same timeline (standalone, they clock
+themselves). strike-load keeps its simulated users as internal threads,
+just like restad-bench does.
+
+### Always send the request to the leader
+
+etcd holds the leadership in the `strike/leader` key, with the endpoint
+of the leader, so asking etcd is enough:
+
+    docker compose exec etcd etcdctl get strike/leader --print-value-only
+    # http://node2:12345
+
+    LEADER=$(docker compose exec etcd etcdctl get strike/leader --print-value-only)
+    N=${LEADER#http://node}; PORT=$((12345 + ${N%%:*} - 1))   # nodeN -> 12345+N-1
+    ID=$(curl -s -X POST localhost:$PORT/calc --data-binary 3,4,5,6)
+    curl -s localhost:$PORT/calc/$ID/add
+    # The leader computes it itself or delegates; the X-Served-By and
+    # X-Leaded-By headers tell who did what.
+
+The whole mode is request-driven: on an idle workforce etcd answers
+`none` (memberships and the leadership lease have expired), and any
+request, even a `curl localhost:12345/health`, wakes the fleet and
+elects a leader.
 
 The delegation behaviour is tuned with environment variables (see the
 table in the sac-restad README), compose gives them defaults that can be
@@ -89,38 +123,45 @@ etcd and the workforce is whatever etcd says it is.
 
     === The calculators' strike ===
     [   0.0s] starting the workforce: etcd + redis + 5 calculators (docker compose up -d --build)
-    [   2.1s] waiting for the nodes to be healthy...
-    [   2.9s] all 5 nodes are healthy
-    [   3.4s] we see node3 is elected leader
-    [   3.5s] sending load: 5 clients x 3.0 ops/s = 15.0 ops/s for 60s
-    [   3.5s] the chaos monkey is loose: a strike every 4-9s
-    [   7.9s] the chaos monkey sends node2 on strike (on strike for 4.3s)
-    [  13.4s] we see node3 is elected leader
-    [  14.2s] node3: burned out (burned out for 3.1s)
-    [  14.7s] the leader (node3) is gone, electing a new one...
-    [  15.2s] we see node1 is elected leader
+    [   4.3s] waiting for the nodes to be healthy...
+    [   5.9s] all 5 nodes are healthy
+    [   5.9s] we see node1 is elected leader
+    [   6.0s] the chaos monkey is loose: a strike every 4-9s
+    [   6.0s] sending load: 5 clients x 3.0 ops/s each (total 15.0 ops/s) for 60s
+    [  11.0s]   77 ops in  5.0s (  15.4 ops/s) reqs=231 teapots=0 errors=0
+    [  14.4s] the chaos monkey sends node1 on strike (on strike for 2.3s)
+    [  14.8s] the leader (node1) is gone, electing a new one...
+    [  15.3s] we see node2 is elected leader
+    [  28.3s] node2: burned out (burned out for 2.5s)
+    [  28.9s] we see node1 is elected leader
     ...
-    [  63.9s] the run is over: 873 ops served, collecting the metrics from redis
+    [  64.5s] the storyteller goes home
+    [  64.7s] the chaos monkey is done: 8 strikes
 
-    === summary ===
-    duration        : 61.4s
-    offered (approx): 921 ops (5 clients x 3.0 ops/s)
-    served          : 873 ops / 2612 reqs
-    teapots (418)   : 21
-    errors          : 4 (4xx: 0, 5xx: 3, conn: 1)
-    latency         : avg=12.3ms p50=9.8ms p95=30.1ms p99=44.7ms max=101.2ms
-    leader handled  : 2612 reqs (self: 491 = 18.8%, delegated: 2121 = 81.2%)
+    === what the clients saw ===
+    duration        : 60.0s
+    offered (approx): 901 ops (5 clients x 3.0 ops/s each)
+    served          : 847 ops / 2556 reqs
+    teapots (418)   : 15
+    errors          : 0 (4xx: 0, 5xx: 0, conn: 0)
+    latency         : avg=7.3ms p50=6.1ms p95=14.6ms p99=19.0ms max=27.5ms
+    client view (X-Served-By): node1: 211, node2: 197, node3: 114, ...
+
+    === what the workforce recorded ===
+    duration        : 60.0s
+    leader handled  : 2541 reqs (self: 460 = 18.1%, delegated: 2081 = 81.9%)
     orphans (503)   : 0
-    chaos strikes   : 9
+    strikes suffered: 8
 
     per node (every request as the leader recorded it):
     node        ok   fail  avg_ms  strikes  burnouts  leading  leader%
-    node1      174      2     8.9        2         1    21.2s    34.5%
+    node1      672     39     1.7        1         1    27.9s    46.5%
+    node2      579     91     1.8        1         2    18.0s    30.0%
     ...
 
     leader timeline:
-      [   3.4s -  14.2s] node3
-      [  15.2s -  30.0s] node1
+      [   5.0s -   14.4s] node1
+      [  14.8s -   28.1s] node2
       ...
 
 
@@ -129,17 +170,18 @@ etcd and the workforce is whatever etcd says it is.
 - **Leader election (etcd)**: two etcd key families hold the whole shared
   state, both attached to leases. Every node registers itself under
   `strike/workforce/<hostname>` with its endpoint, and the leadership is
-  the single key `strike/leader`. There is no background loop: requests
-  (health checks included) drive everything. Every request re-asserts its
-  node's membership and asks etcd who leads; a leaderless workforce elects
-  a leader on the next request (compare-and-swap), the leader renews its
-  lease while requests come, a struck or burned out leader steps down the
-  moment a request finds it, and if a leader simply dies its lease expires
-  and the next request elects somebody else. A quiet node lets its
-  membership lapse and drops out of the delegation pool by itself; an idle
-  workforce has no leader until traffic returns. etcd is both the truth
-  about who leads and the service discovery the workload uses to find the
-  leader.
+  the single key `strike/leader`, holding the endpoint of the leader too
+  (the same format, so a client can use it as its base URL). There is no
+  background loop: requests (health checks included) drive everything.
+  Every request re-asserts its node's membership and asks etcd who leads;
+  a leaderless workforce elects a leader on the next request
+  (compare-and-swap), the leader renews its lease while requests come, a
+  struck or burned out leader steps down the moment a request finds it,
+  and if a leader simply dies its lease expires and the next request
+  elects somebody else. A quiet node lets its membership lapse and drops
+  out of the delegation pool by itself; an idle workforce has no leader
+  until traffic returns. etcd is both the truth about who leads and the
+  service discovery the workload uses to find the leader.
 - **Delegation (sac-restad)**: every calculation route of sac-restad is
   wrapped in a `distributed` decorator. Non-leader nodes always compute
   themselves; the leader computes itself with probability
@@ -194,6 +236,13 @@ deployment is one worker with 8 threads (`--workers 1 --threads 8`)
 instead of four sync workers: same API, state that does not need
 synchronising inside the container.
 
+The demo is not one program with threads for everything; it is five
+single-purpose commands and a thin shell composition. Every tool is
+useful alone (load in one terminal, the storyteller in another), they
+share no state (the clients' report is strike-load's, the workforce's
+record is strike-summary's, straight from redis) and the only thing
+strike-demo adds is the order and one shared clock, `STRIKE_T0`.
+
 Sessions were already in shared Redis, so a delegated `POST /calc` can
 land on any node: there is no affinity to break.
 
@@ -242,5 +291,5 @@ This approach is to avoid being a [meat proxy](https://gruhn.me/blog/2026-08-03/
 
 - GLM-5.3-Flash (opencode): Plan and implement the whole sac-strike
   assignment (etcdapi.py, the strike mode of app.py, docker-compose.yml,
-  strike-demo and the READMEs of both repositories)
-- MiniMax-M3.1-Flash (opencode): sac-restad itself (see its README)
+  strike-demo and the READMEs of both repositories) also needed modificatios
+  on sac-restad.
