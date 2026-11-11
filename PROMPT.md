@@ -186,3 +186,31 @@ Decisions:
 - One shared clock: strike-demo exports `STRIKE_T0` and every tool
   narrates `[xx.xs]` on the same timeline (standalone, they clock
   themselves).
+
+## Interaction 6 — always a leader in etcd
+
+> "When I've said that I didn't care about not having a leader I
+> assumed that I'll always had an endpoint to send the requests. So I
+> want some mechanism that is distributed and fault tolerant to keep a
+> leader elected so there is always a value at etcd for the leader."
+
+Decisions:
+
+- A guardian thread per node repeats the exact same keepalive pass the
+  requests run (`beat()`: membership + leadership dance) every TTL/3.
+  Distributed (every node runs it, no coordinator), fault tolerant (a
+  dead leader is detected by lease expiry in at most TTL, any healthy
+  node claims on the next pass, a transient etcd hiccup is survived by
+  the 2x margin), and there is no single point of failure.
+- Requests remain the fast path and keep deciding from fresh etcd
+  reads; the guardian only exists so the etcd state never goes dark in
+  the silence: always a value at `strike/leader` (bar the sub-second
+  transition gaps).
+- The burnout countdown fires by the clock again, so an idle workforce
+  keeps electing and burning out leaders forever, exactly as the
+  assignment describes.
+- An etcd outage longer than about two beats (~2.6s) drops the
+  leadership; the fleet re-elects on recovery.
+- Revised consequence of Interaction 3: the accepted "idle workforce
+  has no leader" no longer holds; memberships never lapse either, so a
+  quiet node stays in the delegation pool.

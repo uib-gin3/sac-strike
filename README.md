@@ -105,10 +105,16 @@ of the leader, so asking etcd is enough:
     # The leader computes it itself or delegates; the X-Served-By and
     # X-Leaded-By headers tell who did what.
 
-The whole mode is request-driven: on an idle workforce etcd answers
-`none` (memberships and the leadership lease have expired), and any
-request, even a `curl localhost:12345/health`, wakes the fleet and
-elects a leader.
+The leader is always there, even on a workforce nobody is talking to: a
+guardian thread in every node repeats the keepalive pass every TTL/3,
+so memberships stay fresh, the leadership is renewed (or claimed by the
+next node when the leader dies or burns out) and the burnout countdowns
+fire on time with zero traffic. Watch it churn:
+
+    watch -n 1 'docker compose exec etcd etcdctl get strike/leader --print-value-only'
+
+Only the sub-second gaps between a lease expiring and the next claim
+are leaderless; a client that reads `none` just reads again.
 
 The delegation behaviour is tuned with environment variables (see the
 table in the sac-restad README), compose gives them defaults that can be
@@ -171,17 +177,19 @@ etcd and the workforce is whatever etcd says it is.
   state, both attached to leases. Every node registers itself under
   `strike/workforce/<hostname>` with its endpoint, and the leadership is
   the single key `strike/leader`, holding the endpoint of the leader too
-  (the same format, so a client can use it as its base URL). There is no
-  background loop: requests (health checks included) drive everything.
-  Every request re-asserts its node's membership and asks etcd who leads;
-  a leaderless workforce elects a leader on the next request
-  (compare-and-swap), the leader renews its lease while requests come, a
-  struck or burned out leader steps down the moment a request finds it,
-  and if a leader simply dies its lease expires and the next request
-  elects somebody else. A quiet node lets its membership lapse and drops
-  out of the delegation pool by itself; an idle workforce has no leader
-  until traffic returns. etcd is both the truth about who leads and the
-  service discovery the workload uses to find the leader.
+  (the same format, so a client can use it as its base URL). Requests
+  drive the decisions: every request runs one keepalive pass that
+  re-asserts membership and asks etcd who leads; a leaderless workforce
+  elects a leader on the next pass (compare-and-swap), the leader renews
+  its lease while requests come, a struck or burned out leader steps
+  down the moment a pass finds it, and if a leader simply dies its lease
+  expires and the next pass elects somebody else. And because silence
+  kills leases, every node also runs a guardian thread repeating the
+  same pass every TTL/3: the state in etcd never goes dark, there is
+  (almost) always a leader even when nobody is talking to the workforce,
+  and the burnout countdowns fire on time. A quiet node never drops out
+  of the delegation pool anymore. etcd is both the truth about who leads
+  and the service discovery the workload uses to find the leader.
 - **Delegation (sac-restad)**: every calculation route of sac-restad is
   wrapped in a `distributed` decorator. Non-leader nodes always compute
   themselves; the leader computes itself with probability
@@ -225,11 +233,15 @@ One etcd key per node (its workforce entry) plus one leader key, all with
 leases, are the smallest election and service discovery that can be
 explained in a sentence. Raft is inside etcd, not inside this repo.
 
-There is no background thread: the requests themselves drive membership,
-elections, renewals and step downs. The trade-off is accepted: an idle
-workforce has no leader, the burnout fires on the first request after its
-countdown expires, and health checks count as requests (which is what
-keeps the workforce warm during a demo).
+There is no management loop doing decisions: requests run the keepalive
+pass and decide from fresh etcd reads. The only background thread is
+the guardian, which repeats the very same pass in the silence so the
+etcd state never goes dark. The trade-off is honest: during the
+sub-second gaps between a lease expiring and the next claim there is no
+leader, and an etcd outage longer than two beats drops the leadership
+until etcd is back. In exchange the countdowns fire by the clock, the
+idle workforce keeps churning leaders like the assignment describes,
+and there is always an endpoint to find at etcd.
 
 The strike/leader state lives in the process memory, so the gunicorn
 deployment is one worker with 8 threads (`--workers 1 --threads 8`)
