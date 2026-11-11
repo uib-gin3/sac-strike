@@ -214,3 +214,23 @@ Decisions:
 - Revised consequence of Interaction 3: the accepted "idle workforce
   has no leader" no longer holds; memberships never lapse either, so a
   quiet node stays in the delegation pool.
+
+## Interaction 7 — a simpler manual example
+
+> "In the readme there is a manual example saying: docker compose exec
+> etcd etcdctl get strike/leader --print-value-only [...] LEADER=$(...)
+> N=${LEADER#http://node}; PORT=$((12345 + ${N%%:*} - 1)) [...] is that
+> correct? It feels unnecessary complicated"
+
+Decisions:
+
+- It was correct on the happy path, but the bash string surgery was
+  noise in a teaching example, and it silently failed on the
+  sub-second leaderless gaps: an empty LEADER made the arithmetic
+  produce port 12344, where nothing listens.
+- The mapping (nodeN to the published port 12345+N-1) is a job for a
+  command, not for shell acrobatics: `strike-leader` answers "where do
+  I send requests?" with the leader's host port (retrying the
+  sub-second gaps), or with the raw endpoint under --endpoint.
+- The README example is now three lines of curl and one substitution;
+  the etcdctl line stays to show where the truth lives.

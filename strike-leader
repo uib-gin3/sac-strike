@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+
+# This file has been implemented with GLM-5.3-Flash on OpenCode
+
+# strike-leader: where to send the requests.
+#
+# Reads the leadership from etcd (strike/leader holds the endpoint of
+# the leader) and answers with the host port to talk to, or with the
+# raw endpoint when --endpoint is given. It retries for a couple of
+# seconds so the sub-second leaderless gaps do not matter. One thing:
+# answer the question.
+#
+#     ./strike-leader            # 12346
+#     ./strike-leader --endpoint # http://node2:12345
+
+import argparse
+import sys
+import time
+from urllib.parse import urlsplit
+
+import strikeapi
+
+
+def read_leader(etcd, retries=8, pause=0.25):
+    """ The endpoint of the leader, retrying the sub-second gaps.
+
+    " The guardian keeps a leader elected at all times, but between a
+    " lease expiring and the next claim there can be a brief gap: read
+    " again instead of answering nothing.
+    """
+
+    for _ in range(retries):
+        try:
+            endpoint = strikeapi.etcd_get(etcd, strikeapi.LEADER_KEY)
+        except OSError:
+            endpoint = None
+        if endpoint:
+            return endpoint
+        time.sleep(pause)
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='strike-leader',
+        description="Answer with the host port of the current leader.")
+    parser.add_argument('--nodes', type=int, default=5,
+                        help="number of nodes in the workforce (default: 5)")
+    parser.add_argument('--port-base', type=int, default=12345,
+                        help="host port of node1, following nodes +1 "
+                             "(default: 12345)")
+    parser.add_argument('--etcd', default='127.0.0.1:2379',
+                        help="etcd address as seen from here "
+                             "(default: 127.0.0.1:2379)")
+    parser.add_argument('--endpoint', action='store_true',
+                        help="print the raw endpoint etcd holds "
+                             "(http://nodeN:12345) instead of the host port")
+    args = parser.parse_args()
+
+    endpoint = read_leader(args.etcd)
+    if endpoint is None:
+        print("no leader in etcd (is the workforce running?)", file=sys.stderr)
+        return 1
+
+    if args.endpoint:
+        print(endpoint)
+        return 0
+
+    name = urlsplit(endpoint).hostname
+    port = strikeapi.nodes(args.nodes, args.port_base).get(name)
+    if port is None:
+        print(f"the leader {name} is not one of the {args.nodes} known nodes",
+              file=sys.stderr)
+        return 1
+
+    print(port)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

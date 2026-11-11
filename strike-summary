@@ -120,7 +120,7 @@ def read_metrics(redis_addr, names, duration):
         if end_wall is not None:
             end = min(end, end_wall)
             start = min(start, end_wall)
-        if end > start:
+        if end - start > 0.05:   # sub-50ms tenures are rounding noise
             clamped.append((node, start, end))
 
     for node, start, end in clamped:
