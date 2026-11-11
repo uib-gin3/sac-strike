@@ -27,11 +27,12 @@ def percentile(sorted_samples, p):
     return sorted_samples[lo] + (sorted_samples[hi] - sorted_samples[lo]) * (k - lo)
 
 
-def read_metrics(redis_addr, names, end_wall):
+def read_metrics(redis_addr, names, duration):
     """ The metrics the leader stored in Redis while serving.
 
-    " end_wall is the wall clock time the run is assumed to have ended:
-    " it closes the tenure of a leader that was still leading.
+    " duration (when given) closes the tenure of a leader that was
+    " still leading: anchored on the shared clock when there is one,
+    " on the first event otherwise.
     """
 
     resp = strikeapi.Resp(*redis_addr)
@@ -53,6 +54,16 @@ def read_metrics(redis_addr, names, end_wall):
         except ValueError:
             pass
     events.sort(key=lambda event: event.get('t', 0))
+
+    if duration > 0:
+        if strikeapi.SHARED_CLOCK:
+            end_wall = strikeapi.wall_at(duration)
+        elif events:
+            end_wall = events[0]['t'] + duration
+        else:
+            end_wall = None
+    else:
+        end_wall = None
 
     def number(key):
         value = counters.get(key)
@@ -184,16 +195,8 @@ def main():
     redis_addr = tuple(args.redis.split(':')) if ':' in args.redis \
         else (args.redis, 6379)
 
-    # When the duration is given (strike-demo passes it) the run is
-    # assumed to have ended STRIKE_T0 + duration, so the tenure of a
-    # leader that was still leading gets closed there.
-    if args.duration > 0:
-        end_wall = strikeapi.wall_at(args.duration)
-    else:
-        end_wall = None
-
     try:
-        metrics = read_metrics(redis_addr, names, end_wall)
+        metrics = read_metrics(redis_addr, names, args.duration)
     except OSError as exc:
         print(f"cannot read the redis metrics: {exc}", file=sys.stderr)
         metrics = {'events': [], 'per_node': {}, 'self_served': 0,

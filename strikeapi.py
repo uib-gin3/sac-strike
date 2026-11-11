@@ -22,6 +22,7 @@ LEADER_KEY = 'strike/leader'
 
 # The shared clock: strike-demo exports STRIKE_T0 so every tool narrates
 # on the same timeline. A tool run standalone falls back to its own start.
+SHARED_CLOCK = os.environ.get('STRIKE_T0') is not None
 _T0 = os.environ.get('STRIKE_T0')
 _T0 = float(_T0) if _T0 else time.time()
 
