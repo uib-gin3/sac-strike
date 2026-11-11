@@ -1,0 +1,80 @@
+# The calculators' strike: 5 calculator nodes (sac-restad), etcd for the
+# leader election and redis as the shared memory where the leader keeps
+# the metrics.
+#
+# For now the nodes build from the sibling sac-restad checkout to iterate
+# fast. When the assignment is delivered, point them at the public
+# repository instead (docker compose builds straight from a git URL):
+#
+#   build: https://github.com/uib-gin3/sac-restad.git
+
+x-environment: &node-environment
+  USE_REDIS: "1"
+  STRIKE_ETCD: etcd:2379
+  # The same list for every node (themselves included): each one
+  # excludes itself when delegating.
+  STRIKE_COLLEAGUES: http://node1:12345,http://node2:12345,http://node3:12345,http://node4:12345,http://node5:12345
+  STRIKE_LEADING_OVERHEAD: ${STRIKE_LEADING_OVERHEAD:-0.1}
+  STRIKE_ALGORITHM: ${STRIKE_ALGORITHM:-random}
+  STRIKE_MIN_TIME: ${STRIKE_MIN_TIME:-2}
+  STRIKE_MAX_TIME: ${STRIKE_MAX_TIME:-6}
+  STRIKE_BURNOUT_MIN_TIME: ${STRIKE_BURNOUT_MIN_TIME:-8}
+  STRIKE_BURNOUT_MAX_TIME: ${STRIKE_BURNOUT_MAX_TIME:-20}
+  STRIKE_RETRY: ${STRIKE_RETRY:-5}
+  STRIKE_LEADER_TTL: ${STRIKE_LEADER_TTL:-4}
+
+x-node: &node
+  build: ../sac-restad
+  environment: *node-environment
+  depends_on:
+    - redis
+    - etcd
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.21
+    command:
+      - etcd
+      - --name=strike
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-cluster=strike=http://etcd:2380
+    ports:
+      - "2379:2379"
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "6379:6379"
+
+  node1:
+    <<: *node
+    hostname: node1
+    ports:
+      - "12345:12345"
+
+  node2:
+    <<: *node
+    hostname: node2
+    ports:
+      - "12346:12345"
+
+  node3:
+    <<: *node
+    hostname: node3
+    ports:
+      - "12347:12345"
+
+  node4:
+    <<: *node
+    hostname: node4
+    ports:
+      - "12348:12345"
+
+  node5:
+    <<: *node
+    hostname: node5
+    ports:
+      - "12349:12345"
