@@ -11,7 +11,7 @@ about a minute of beautiful chaos.
 This is the orchestration half of the assignment: the calculator itself is
 [sac-restad](https://github.com/uib-gin3/sac-restad), which grew a
 distributed mode for the occasion. Here there is only Docker Compose to
-deploy the fleet (5 calculator nodes + etcd + redis) and `strike-demo`, a
+deploy the workforce (5 calculator nodes + etcd + redis) and `strike-demo`, a
 single script that starts everything, sends load to the leader, sets the
 chaos monkey loose, narrates what happens and closes with a summary built
 from the metrics stored in Redis.
@@ -62,13 +62,13 @@ The one-liner (about 1 minute of tests):
 
     ./strike-demo
 
-It does everything: builds and starts the fleet, waits for the first
+It does everything: builds and starts the workforce, waits for the first
 leader, sends load, runs the chaos monkey, narrates and prints the
 summary. Useful options:
 
     ./strike-demo -c 5 -r 3 -d 60    # 5 clients, 3 ops/s each, 60 seconds
-    ./strike-demo --skip-up          # the fleet is already running
-    ./strike-demo --keep             # leave the fleet running at the end
+    ./strike-demo --skip-up          # the workforce is already running
+    ./strike-demo --keep             # leave the workforce running at the end
 
 Or the manual way:
 
@@ -82,10 +82,13 @@ overridden, for example:
 
     STRIKE_ALGORITHM=robust docker compose up -d --build
 
+There is no colleague list to configure: every node registers itself in
+etcd and the workforce is whatever etcd says it is.
+
 ### What the demo tells
 
     === The calculators' strike ===
-    [   0.0s] starting the fleet: etcd + redis + 5 calculators (docker compose up -d --build)
+    [   0.0s] starting the workforce: etcd + redis + 5 calculators (docker compose up -d --build)
     [   2.1s] waiting for the nodes to be healthy...
     [   2.9s] all 5 nodes are healthy
     [   3.4s] we see node3 is elected leader
@@ -123,26 +126,32 @@ overridden, for example:
 
 ## How it works
 
-- **Leader election (etcd)**: the whole election is one key, `strike/leader`,
-  holding the leader hostname and attached to a lease. Every node runs a
-  campaign thread: a healthy node claims the key when it is free
-  (compare-and-swap) and renews it every 0.5s while it leads. A struck or
-  burned out leader deletes the key and steps down immediately, and when a
-  leader simply dies the lease expires and the key vanishes: the next tick
-  somebody else claims it. etcd is both the truth about who leads and the
-  service discovery the workload uses to find the leader.
+- **Leader election (etcd)**: two etcd key families hold the whole shared
+  state, both attached to leases. Every node registers itself under
+  `strike/workforce/<hostname>` with its endpoint, and the leadership is
+  the single key `strike/leader`. There is no background loop: requests
+  (health checks included) drive everything. Every request re-asserts its
+  node's membership and asks etcd who leads; a leaderless workforce elects
+  a leader on the next request (compare-and-swap), the leader renews its
+  lease while requests come, a struck or burned out leader steps down the
+  moment a request finds it, and if a leader simply dies its lease expires
+  and the next request elects somebody else. A quiet node lets its
+  membership lapse and drops out of the delegation pool by itself; an idle
+  workforce has no leader until traffic returns. etcd is both the truth
+  about who leads and the service discovery the workload uses to find the
+  leader.
 - **Delegation (sac-restad)**: every calculation route of sac-restad is
   wrapped in a `distributed` decorator. Non-leader nodes always compute
   themselves; the leader computes itself with probability
-  `1/N - (1/N)·STRIKE_LEADING_OVERHEAD` (N = instances; 0.18 with 5 nodes
-  and an overhead of 0.1) and delegates the rest, retrying up to 5 times
-  with a different colleague on every failure. Three algorithms choose the
-  colleague: `random`, `robust` (fewest failures) and `fastest` (lowest
-  average response time).
+  `1/N - (1/N)·STRIKE_LEADING_OVERHEAD` (N = workforce size; 0.18 with 5
+  nodes and an overhead of 0.1) and delegates the rest, retrying up to 5
+  times with a different colleague on every failure. Three algorithms
+  choose the colleague: `random`, `robust` (fewest failures) and `fastest`
+  (lowest average response time).
 - **Strikes and burnouts**: `POST /strike` sends a node on strike for a
   random window (`STRIKE_MIN_TIME..STRIKE_MAX_TIME`): it answers 418 I'm a
-  teapot to every calculation and, if it was leading, steps down at once.
-  Every newly elected leader starts a countdown of random
+  teapot to every calculation and, if it was leading, deletes the leader
+  key right away. Every newly elected leader starts a countdown of random
   `STRIKE_BURNOUT_MIN_TIME..STRIKE_BURNOUT_MAX_TIME`: when it fires the
   node also goes 418 for a window just like a strike, and it recovers as a
   plain node, having lost the leadership. `GET /health` always answers,
@@ -167,11 +176,18 @@ redis. Ports on the host: nodes on 12345..12349, etcd on 2379, redis on
 
 Reusing sac-restad as the calculator (instead of writing a new one) keeps
 the assignment honest: the calculator already worked, the interesting part
-is what surrounds it. Its own docker-compose stays untouched; the fleet
+is what surrounds it. Its own docker-compose stays untouched; the workforce
 lives here.
 
-One etcd key and one lease are the smallest leader election that can be
+One etcd key per node (its workforce entry) plus one leader key, all with
+leases, are the smallest election and service discovery that can be
 explained in a sentence. Raft is inside etcd, not inside this repo.
+
+There is no background thread: the requests themselves drive membership,
+elections, renewals and step downs. The trade-off is accepted: an idle
+workforce has no leader, the burnout fires on the first request after its
+countdown expires, and health checks count as requests (which is what
+keeps the workforce warm during a demo).
 
 The strike/leader state lives in the process memory, so the gunicorn
 deployment is one worker with 8 threads (`--workers 1 --threads 8`)

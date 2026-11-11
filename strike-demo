@@ -4,7 +4,7 @@
 
 # strike-demo: "The calculators' strike", the whole show in about a minute.
 #
-# It starts the fleet with docker compose (5 calculator nodes + etcd +
+# It starts the workforce with docker compose (5 calculator nodes + etcd +
 # redis), sends a steady workload to whoever etcd says is the leader, lets
 # a chaos monkey put random nodes on strike and narrates everything that
 # happens. When the run is over it reads the metrics the leader stored in
@@ -519,7 +519,7 @@ def clean_metrics(redis_addr):
 def main():
     parser = argparse.ArgumentParser(
         prog='strike-demo',
-        description="The calculators' strike: fleet, workload, chaos monkey "
+        description="The calculators' strike: workforce, workload, chaos monkey "
                     "and summary, in about a minute.")
     parser.add_argument('-c', '--clients', type=int, default=5,
                         help="concurrent clients (default: 5)")
@@ -528,7 +528,7 @@ def main():
     parser.add_argument('-d', '--duration', type=float, default=60.0,
                         help="run duration in seconds (default: 60)")
     parser.add_argument('--nodes', type=int, default=5,
-                        help="number of nodes in the fleet (default: 5)")
+                        help="number of nodes in the workforce (default: 5)")
     parser.add_argument('--port-base', type=int, default=12345,
                         help="host port of node1, following nodes +1 "
                              "(default: 12345)")
@@ -543,9 +543,9 @@ def main():
     parser.add_argument('--gap-max', type=float, default=9.0,
                         help="maximum seconds between chaos strikes (9)")
     parser.add_argument('--skip-up', action='store_true',
-                        help="assume the fleet is already running")
+                        help="assume the workforce is already running")
     parser.add_argument('--keep', action='store_true',
-                        help="leave the fleet running at the end")
+                        help="leave the workforce running at the end")
     args = parser.parse_args()
 
     if args.clients < 1:
@@ -567,14 +567,14 @@ def main():
         print(f"[{time.monotonic() - t0:6.1f}s] {text}", flush=True)
 
     if not args.skip_up:
-        say(f"starting the fleet: etcd + redis + {args.nodes} calculators "
+        say(f"starting the workforce: etcd + redis + {args.nodes} calculators "
             f"(docker compose up -d --build)")
         try:
             compose(['up', '-d', '--build'])
         except subprocess.CalledProcessError:
             raise SystemExit("docker compose failed, is docker up?")
     else:
-        say("skipping the fleet start (--skip-up)")
+        say("skipping the workforce start (--skip-up)")
 
     clean_metrics(redis_addr)
     wait_for_health(say, nodes)
@@ -615,10 +615,10 @@ def main():
     print_summary(args, nodes, strikers, chaos, metrics, elapsed, wall_t0)
 
     if not args.keep:
-        say("tearing the fleet down (docker compose down)")
+        say("tearing the workforce down (docker compose down)")
         compose(['down'])
     else:
-        say("leaving the fleet running (--keep)")
+        say("leaving the workforce running (--keep)")
 
     return 0
 

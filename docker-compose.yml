@@ -11,9 +11,8 @@
 x-environment: &node-environment
   USE_REDIS: "1"
   STRIKE_ETCD: etcd:2379
-  # The same list for every node (themselves included): each one
-  # excludes itself when delegating.
-  STRIKE_COLLEAGUES: http://node1:12345,http://node2:12345,http://node3:12345,http://node4:12345,http://node5:12345
+  # No colleague list: every node registers itself in etcd
+  # (strike/workforce/<hostname>) and reads the workforce from there.
   STRIKE_LEADING_OVERHEAD: ${STRIKE_LEADING_OVERHEAD:-0.1}
   STRIKE_ALGORITHM: ${STRIKE_ALGORITHM:-random}
   STRIKE_MIN_TIME: ${STRIKE_MIN_TIME:-2}
@@ -21,7 +20,7 @@ x-environment: &node-environment
   STRIKE_BURNOUT_MIN_TIME: ${STRIKE_BURNOUT_MIN_TIME:-8}
   STRIKE_BURNOUT_MAX_TIME: ${STRIKE_BURNOUT_MAX_TIME:-20}
   STRIKE_RETRY: ${STRIKE_RETRY:-5}
-  STRIKE_LEADER_TTL: ${STRIKE_LEADER_TTL:-4}
+  STRIKE_TTL: ${STRIKE_TTL:-4}
 
 x-node: &node
   build: ../sac-restad
