@@ -75,7 +75,8 @@ that would do 5 clients, 3 ops/s each, 60 seconds.
 Unix style: every tool is useful on its own, open a few terminals and
 mix them as you like.
 
-    ./strike-up                      # workforce up, healthy, leader elected
+    ./strike-up                      # the workforce up, metrics fresh
+    ./strike-ready                   # every node healthy, a leader elected
     ./strike-leader                  # where to send requests: the leader's base URL
     ./strike-load -c 5 -r 3 -d 60    # the users: load and the client report
     ./strike-chaos -d 60             # the agitator: random strikes
@@ -142,7 +143,7 @@ etcd and the workforce is whatever etcd says it is.
 ### What the demo tells
 
     === The calculators' strike ===
-    [   0.0s] starting the workforce: etcd + redis + 5 calculators (docker compose up -d --build)
+    starting the workforce: etcd + redis + 5 calculators (docker compose up -d --build)
     [   4.3s] waiting for the nodes to be healthy...
     [   5.9s] all 5 nodes are healthy
     [   5.9s] we see node1 is elected leader
@@ -263,8 +264,8 @@ deployment is one worker with 8 threads (`--workers 1 --threads 8`)
 instead of four sync workers: same API, state that does not need
 synchronising inside the container.
 
-The demo is not one program with threads for everything; it is five
-single-purpose commands and a thin shell composition. Every tool is
+The demo is not one program with threads for everything; it is a
+handful of single-purpose commands and a thin shell composition. Every tool is
 useful alone (load in one terminal, the storyteller in another), they
 share no state (the clients' report is strike-load's, the workforce's
 record is strike-summary's, straight from redis) and the only thing

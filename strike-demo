@@ -35,6 +35,7 @@ export STRIKE_T0
 echo "=== The calculators' strike ==="
 
 ./strike-up "$@" || exit 1
+./strike-ready "$@" || exit 1
 
 ./strike-chaos -d "$DURATION" "$@" &
 CHAOS=$!

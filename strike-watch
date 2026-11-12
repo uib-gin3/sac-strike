@@ -52,8 +52,8 @@ def main():
     node_map = strikeapi.nodes(args.nodes, args.port_base)
     deadline = time.monotonic() + args.duration if args.duration > 0 else None
 
-    # The leader at start-up is old news (strike-up already told about
-    # it): the watcher announces the changes.
+    # The leader at start-up is old news (strike-ready already told
+    # about it): the watcher announces the changes.
     try:
         leader = strikeapi.leader_name(args.etcd)
     except OSError:

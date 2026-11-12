@@ -1,121 +1,32 @@
-#!/usr/bin/env python3
+#!/bin/sh
 
-# This file has been implemented with GLM-5.3-Flash on OpenCode
-
-# strike-up: bring the workforce up and wait until it is ready.
+# strike-up: bring the workforce up. One thing: bring it up.
 #
-# docker compose up -d --build, clean the redis metrics, wait for every
-# node to be healthy and for somebody to claim the leadership. One
-# thing: start the show.
+# No waiting here: the readiness is strike-ready's business, and
+# strike-demo composes both. The metrics start fresh, even over a
+# leftover redis.
 #
 #     ./strike-up
-#     ./strike-up --skip-up     # the workforce is already running
 
-import argparse
-import http.client
-import subprocess
-import sys
-import time
-from pathlib import Path
+cd "$(dirname "$0")" || exit 1
 
-import strikeapi
+echo "starting the workforce: etcd + redis + 5 calculators (docker compose up -d --build)"
+docker compose up -d --build \
+    || { echo "docker compose failed, is docker up?" >&2; exit 1; }
 
-HOME = Path(__file__).resolve().parent
-
-
-def compose(command):
-    return subprocess.run(['docker', 'compose'] + command, cwd=HOME, check=True)
-
-
-def clean_metrics(redis_addr):
-    """ A run starts with clean metrics, even over a leftover redis. """
-
-    resp = strikeapi.Resp(*redis_addr)
-    try:
-        keys = resp.command('KEYS', 'strike:*') or []
-        if keys:
-            resp.command('DEL', *keys)
-    finally:
-        resp.close()
-
-
-def wait_for_health(node_map, deadline=90.0):
-    """ Every node must answer /health with 200. """
-
-    strikeapi.stamp("waiting for the nodes to be healthy...")
-    limit = time.monotonic() + deadline
-    pending = dict(node_map)
-    while pending:
-        if time.monotonic() > limit:
-            raise SystemExit(f"nodes never got healthy: {', '.join(pending)}")
-        for name, port in list(pending.items()):
-            try:
-                status, _, _ = strikeapi.req(port, 'GET', '/health', timeout=2.0)
-            except (OSError, http.client.HTTPException):
-                continue
-            if status == 200:
-                pending.pop(name)
-        if pending:
-            time.sleep(0.5)
-    strikeapi.stamp(f"all {len(node_map)} nodes are healthy")
-
-
-def wait_for_leader(etcd, deadline=30.0):
-    """ Somebody must claim the strike/leader key. """
-
-    limit = time.monotonic() + deadline
-    while time.monotonic() < limit:
-        try:
-            leader = strikeapi.leader_name(etcd)
-        except OSError:
-            leader = None
-        if leader:
-            strikeapi.stamp(f"we see {leader} is elected leader")
-            return leader
-        time.sleep(0.25)
-    raise SystemExit("nobody claimed the leadership")
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        prog='strike-up',
-        description="Bring the calculators' workforce up and wait for it.")
-    parser.add_argument('--nodes', type=int, default=5,
-                        help="number of nodes in the workforce (default: 5)")
-    parser.add_argument('--port-base', type=int, default=12345,
-                        help="host port of node1, following nodes +1 "
-                             "(default: 12345)")
-    parser.add_argument('--etcd', default='127.0.0.1:2379',
-                        help="etcd address as seen from here "
-                             "(default: 127.0.0.1:2379)")
-    parser.add_argument('--redis', default='127.0.0.1:6379',
-                        help="redis address as seen from here "
-                             "(default: 127.0.0.1:6379)")
-    parser.add_argument('--skip-up', action='store_true',
-                        help="assume the workforce is already running")
-    args = parser.parse_args()
-
-    node_map = strikeapi.nodes(args.nodes, args.port_base)
-    redis_addr = tuple(args.redis.split(':')) if ':' in args.redis \
-        else (args.redis, 6379)
-
-    if not args.skip_up:
-        strikeapi.stamp(f"starting the workforce: etcd + redis + "
-                        f"{args.nodes} calculators (docker compose up -d --build)")
-        try:
-            compose(['up', '-d', '--build'])
-        except subprocess.CalledProcessError:
-            raise SystemExit("docker compose failed, is docker up?")
-    else:
-        strikeapi.stamp("skipping the workforce start (--skip-up)")
-
-    clean_metrics(redis_addr)
-    wait_for_health(node_map)
-    wait_for_leader(args.etcd)
-
-
-if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        sys.exit(130)
+# A run starts with clean metrics, even over a leftover redis. Right
+# after compose up redis may still be waking up, so the attempt pings
+# it first (the wipe's own pipeline would hide that failure) and the
+# loop retries briefly instead of failing over that.
+n=0
+until docker compose exec -T redis sh -c \
+      'redis-cli ping > /dev/null 2>&1 || exit 1
+       redis-cli --scan --pattern "strike:*" | xargs -r redis-cli del' \
+      > /dev/null; do
+    n=$((n + 1))
+    if [ "$n" -ge 5 ]; then
+        echo "redis is not answering (docker compose exec redis ...)" >&2
+        exit 1
+    fi
+    sleep 0.5
+done

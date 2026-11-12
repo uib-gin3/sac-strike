@@ -265,3 +265,38 @@ Decisions:
   leader_port), shared by strike-leader and strike-client; req() grew a
   verbose mode for the -v conversation; the operations tuple moved to
   strikeapi too.
+
+## Interaction 9 — strike-up just brings things up
+
+> "Why strike-up is that complicated? I would expect a docker compose up
+> to be enough. Simplify it. Just bring things up without waiting for
+> them. Do this waiting at the strike-demo keeping each script as
+> simple as possible. At most check in the scripts that the conditions
+> are met erroring properly (that maybe si inplace)"
+
+Decisions:
+
+- `strike-up` is now ~20 lines of shell: `docker compose up -d --build`
+  plus the fresh-metrics wipe, done with `redis-cli` *inside* the redis
+  container (no host client, no python, no arguments). It waits for
+  nothing: the brief retry on the wipe only absorbs the sub-second
+  redis startup race, then it errors properly. `--skip-up` is gone,
+  `compose up -d` over a live workforce is already a no-op.
+- The waiting moved to a new single-purpose `strike-ready` (the code
+  moved verbatim out of strike-up): every node must answer /health and
+  somebody must claim `strike/leader`, `--deadline` (default 90s), and
+  a proper error when it never comes. `strike-demo` runs it right after
+  `strike-up` (that is where the waiting belongs: the composition
+  orchestrates), and it is useful alone in the manual flow.
+- Supersedes `strike-up`'s part of interaction 5; the rest of that split
+  stands.
+- The condition checks are in place where they matter:
+  `strike-leader`/`strike-client` already fail with "no leader in etcd
+  (is the workforce running?)", `strike-summary` on an unreachable
+  redis, `strike-load`/`strike-chaos` stay tolerant on purpose (what
+  they see, even errors, is their report).
+- The toolbox now splits by world: the docker-world scripts
+  (`strike-up`, `strike-demo`) are shell, the protocol-world tools
+  (`strike-ready`, `strike-load`, `strike-chaos`, `strike-watch`,
+  `strike-summary`, `strike-leader`, `strike-client`) are python on the
+  shared `strikeapi`.
