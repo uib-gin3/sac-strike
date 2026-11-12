@@ -1,26 +1,23 @@
-# The calculators' strike
+# The calculators' **strike**
 
-Five calculators, one leader, etcd pulling the strings, a chaos monkey and
-about a minute of beautiful chaos.
+Send calculations, caculators will elect a lead that will lead by example
+doing the work as well as delegating part of it.
 
-- strike -> the industrial action, and also what the chaos monkey sends
-  the nodes to (they answer 418 I'm a teapot while it lasts).
+Leaders burn out so they step down. Sometimes other calculators also
+go on strike to have a tea.
+
 
 ## Abstract
 
-This is the orchestration half of the assignment: the calculator itself is
-[sac-restad](https://github.com/uib-gin3/sac-restad), which grew a
-distributed mode for the occasion. Here there is only Docker Compose to
-deploy the workforce (5 calculator nodes + etcd + redis) and a handful of
-single-purpose commands (strike-up, strike-leader, strike-load,
-strike-chaos, strike-watch, strike-summary) that `strike-demo` composes
-into the whole show: start everything, send load to the leader, set the
-chaos monkey loose, narrate what happens and close with the reports
-built from what the clients saw and from the metrics stored in Redis.
+An exercice of a distributed system based on the rest calculator 
+[sac-restad](https://github.com/uib-gin3/sac-restad) that has been
+modified to be used also as a distributed system.
+
+This repo [sac-strike](https://github.com/uib-gin3/sac-strike) deploys
+sac-restad in a distributed way. Also includes scripts to test it mostly
+vibe-coded.
 
 ## Assignment
-
-Entregable: "La rebelión de las calculadoras" — translated:
 
 > Implement at least 5 distributed entities that know how to perform
 > basic mathematical operations.
@@ -33,17 +30,15 @@ Entregable: "La rebelión de las calculadoras" — translated:
 > (random time) is activated. After it fires it will not answer for a
 > certain (random) time and when it recovers it will have lost its
 > "leader" role.
-
-Requirements:
-
+>
 > Freedom to use sockets, restful, etcd, zookeeper, ...
 > Mandatory use of containers: at least one per entity.
 > During a run of TotalTime_i quantify metrics: total and answered
 > requests, delays, leaders, leader distribution, etc.
-
-**Delivery**: in AD (the campus delivery system), include the link to the
-(publicly accessible) repository containing the source code and the
-relevant descriptions.
+>
+> **Delivery**: in AD (the campus delivery system), include the link to the
+> (publicly accessible) repository containing the source code and the
+> relevant descriptions.
 
 
 ## Setup
@@ -51,29 +46,31 @@ relevant descriptions.
 Tested on Debian 13 with Docker 29.9.0 and the compose plugin. It should
 just need bash, Docker, Docker Compose and python3 (stdlib only).
 
-The nodes build from the sibling `../sac-restad` checkout, so:
-
-    git clone https://github.com/uib-gin3/sac-restad
     git clone https://github.com/uib-gin3/sac-strike
     cd sac-strike
 
-
 ## Usage
 
-The one-liner (about 1 minute of tests):
+### Simple test
+
+
+
+
+### Full assisted test
+
+The easy way is to use.
 
     ./strike-demo
 
 It composes the single-purpose commands: brings the workforce up, waits
 for the first leader, runs the chaos monkey and the storyteller in the
 background, sends load in the foreground, prints the two reports and
-tears the workforce down. Useful options:
+tears the workforce down.
 
-    ./strike-demo -c 5 -r 3 -d 60    # 5 clients, 3 ops/s each, 60 seconds
-    ./strike-demo --skip-up          # the workforce is already running
-    ./strike-demo --keep             # leave the workforce running at the end
+It has interesting defaults but accepts parameters like `-c 5 -r 3 -d 60`
+that would do 5 clients, 3 ops/s each, 60 seconds.
 
-### The commands, one thing each
+### Using it manually
 
 Unix style: every tool is useful on its own, open a few terminals and
 mix them as you like.
@@ -85,14 +82,15 @@ mix them as you like.
     ./strike-watch                   # the storyteller: narrates forever
     ./strike-summary -d 60           # the ledger: what redis recorded
     ./strike-client -o add 3 4 5     # one operation, leader auto-discovered
-    docker compose down
+    docker compose down              # stops everything
 
 They share one clock: strike-demo exports `STRIKE_T0` and every tool
 narrates `[xx.xs]` on the same timeline (standalone, they clock
 themselves). strike-load keeps its simulated users as internal threads,
-just like restad-bench does.
+just like restad-bench does. (This idea and paragraph was IA generaged,
+I'm impressed!)
 
-### Always send the request to the leader
+### Using it manually and simple
 
 etcd holds the leadership in the `strike/leader` key, with the endpoint
 of the leader, so asking etcd is enough:

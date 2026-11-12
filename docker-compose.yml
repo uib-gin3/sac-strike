@@ -1,13 +1,3 @@
-# The calculators' strike: 5 calculator nodes (sac-restad), etcd for the
-# leader election and redis as the shared memory where the leader keeps
-# the metrics.
-#
-# For now the nodes build from the sibling sac-restad checkout to iterate
-# fast. When the assignment is delivered, point them at the public
-# repository instead (docker compose builds straight from a git URL):
-#
-#   build: https://github.com/uib-gin3/sac-restad.git
-
 x-environment: &node-environment
   USE_REDIS: "1"
   STRIKE_ETCD: etcd:2379
@@ -21,7 +11,7 @@ x-environment: &node-environment
   STRIKE_TTL: ${STRIKE_TTL:-4}
 
 x-node: &node
-  build: ../sac-restad
+  build: https://github.com/uib-gin3/sac-restad.git
   environment: *node-environment
   depends_on:
     - redis
