@@ -184,9 +184,31 @@ account against their robustness, which may be relevant if it is the used algori
 A chaos monkey is implemented to push workers into strike.
 
 
-### Leadership election on etcd
+### Leadership election with etcd
 
-TODO
+There is one key in etcd called `strike/leader`, holding the endpoint of the current
+leader. It is the ZooKeeper recipe from class, with etcd playing ZooKeeper:
+the key is bound to a lease with a TTL (4s by default), so it behaves like
+an ephemeral node, a leader that crashes without stepping down loses the
+lease, etcd deletes the key and the leadership is free again. Instead of
+the ordered queue of sequential nodes and watches, a single key claimed in
+a race, the losers just try again on the next beat.
+
+Claims and renewals are compare-and-swaps. A node that finds the key free
+puts its endpoint only if the key does not exist yet, so of all the nodes
+racing exactly one wins. Is etcd who decides who win.
+
+While leading, the node renews the lease every TTL/3 with a second
+compare-and-swap that only succeeds while the value is still its own endpoint:
+that is the heartbeat. On strike or burnout the leader deletes the key right
+away; a lost renewal means another node owns the key already, so it just steps
+down.
+
+Every request runs one pass of the described system but if there are no requests
+there is a thread (guardian) that keeps beating when there is no traffic, so a 
+there is always an elected leader to send traffic to.
+
+There are more details within the [app.py sourcecode of sac-restad](https://github.com/uib-gin3/sac-restad/blob/636b83c1c96410677776161b8ffce022eb82784f/app.py#L163).
 
 ## Observations
 
