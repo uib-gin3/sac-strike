@@ -1,24 +1,24 @@
 # The calculators' **strike**
 
-Send calculations, caculators will elect a lead that will lead by example
-doing the work as well as delegating part of it.
+Send calculations, and calculators will elect a leader that will lead by
+example, doing the work as well as delegating part of it.
 
-Leaders burnout so they step down and a new leader is elected.
-Sometimes other calculators also step down going on strike and have a tea.
+Leaders burn out so they step down and a new leader is elected.
+Sometimes other calculators also step down, going on strike and having a tea.
 
-Alegory of how IT companies works, leading usually does not releaf you for
-your revious dutties so you burn out. When delegation fasters workers
-trend to be punished with more work and also any leaders knows when a
-reliable work need to be done who is the right candidate.
+Allegory of how IT companies work, leading usually does not relieve you of
+your previous duties so you burn out. When delegating, faster workers
+tend to be punished with more work and also any leader knows when
+reliable work needs to be done who is the right candidate.
 
 ## Abstract
 
-An exercice of a distributed system based on the rest calculator 
+An exercise of a distributed system based on the rest calculator 
 [sac-restad](https://github.com/uib-gin3/sac-restad) that has been
 modified to be used also as a distributed system.
 
 This repo [sac-strike](https://github.com/uib-gin3/sac-strike) deploys
-sac-restad in a distributed way. Also includes scripts to test it, mostly
+sac-restad in a distributed way. It also includes scripts to test it, mostly
 vibe-coded.
 
 ## Assignment
@@ -72,15 +72,15 @@ that would do 5 clients, 3 ops/s each, 60 seconds.
 
 ### Simple test
 
-Start the workers (like a `docker compose up` with some asteriods)
+Start the workers (like a `docker compose up` with some asteroids)
 
     ./strike-up
 
-Wait for a leader to be elected, returns when ready
+Wait for a leader to be elected; it returns when ready
 
     ./strike-ready
 
-Test a calculation `strike-leader` returns the enpoint then curl it.
+Test a calculation: `strike-leader` returns the endpoint, then curl it.
 
     ID=$(curl -s -X POST $(./strike-leader)/calc --data-binary 3,4,5,6)
     curl -v $(./strike-leader)/calc/$ID/add
@@ -88,11 +88,11 @@ Test a calculation `strike-leader` returns the enpoint then curl it.
     # X-Calculated-By: node5   the node that computed
     # 18
 
-There is also a python client to avoid using curl
+There is also a Python client to avoid using curl
 
     ./strike-client -v -o add 3 4 5 6
 
-To know who is the current leader
+To know who the current leader is
 
     docker compose exec etcd etcdctl get strike/leader --print-value-only
 
@@ -108,80 +108,80 @@ mix them as you like.
     ./strike-load -c 5 -r 3 -d 60    # the users: load and the client report
     ./strike-chaos -d 60             # the agitator: random strikes
     ./strike-watch                   # the storyteller: tells what is happening
-    ./strike-summary -d 60           # Show what appended reading stats
+    ./strike-summary -d 60           # Show what happened reading stats
     ./strike-client -o add 3 4 5     # one operation, leader auto-discovered
     docker compose down              # stops everything
 
 They share one clock: strike-demo exports `STRIKE_T0` and every tool
 narrates `[xx.xs]` on the same timeline (standalone, they clock
 themselves). strike-load keeps its simulated users as internal threads,
-just like restad-bench does. (This idea and paragraph was IA generaged,
+just like restad-bench does. (This idea and paragraph were AI-generated,
 I'm impressed!)
 
 ## Design decisions
 
 Use sac-restad as a base and extend it to be usable as a distributed system
-when `` environment variables are present, that way si still compatible
-witht the previous use.
+when `STRIKE_` environment variables are present, that way it is still
+compatible with the previous use.
 
-Use etcd because is industry standard, high performance and Go developed
-wich I prefer over any clucky Java thing.
+Use etcd because it is industry standard, high performance and Go-developed,
+which I prefer over any clunky Java thing.
 
 Minimizing single points of failure that a proxy would introduce,
-that is why there is an script that composes the enpoint to use
-(`strike-leader`) taking it from etcd (wich is a SPOF itself).
+that is why there is a script that composes the endpoint to use
+(`strike-leader`) taking it from etcd (which is a SPOF itself).
 
-As the client is not inside docker using ports as routing element so the client
-can be outside the docker. On a real distributed system DNS would be used.
+As the client is not inside Docker, ports are used as the routing element so
+the client can be outside Docker. On a real distributed system, DNS would be used.
 
-Using Redis as cache, in this case it could be conidered a SPOF but
-it could also be deployed distrubuted but I did not want to overcomplicate
-the assingement with it.
+Using Redis as cache, in this case it could be considered a SPOF but
+it could also be deployed distributed, but I did not want to overcomplicate
+the assignment with it.
 
 Also redis is used to keep statistics.
 
-It would had also been possible to use `etcd` as key-value storage 
+It would have also been possible to use `etcd` as key-value storage 
 and avoid using Redis but I like the idea of keeping `etcd` usage
 as minimal as possible as it is critical.
 
-Is true that there can be a gap between asking for the leader and 
-sending the request. If done manually can fail that's why there is
+It is true that there can be a gap between asking for the leader and 
+sending the request. If done manually it can fail, that's why there is
 `strike-client` that handles those errors and retries.
 
-The leader does some part of the job and delegate other. The propition
-of how much calculations are done by the leader vs the delegate ones
-are controled by the STRIKE_LEADING_OVERHEAD envvar. The idea is to 
-distribute evenly the workload across all the nodes incluing the leader
-but as the leader has come overhead coorinating reduce the probability
-of doint the job considering this overhead.
+The leader does some part of the job and delegates the rest. The proportion
+of how many calculations are done by the leader vs the delegated ones
+is controlled by the STRIKE_LEADING_OVERHEAD envvar. The idea is to 
+distribute the workload evenly across all the nodes including the leader
+but as the leader has some overhead coordinating, the probability
+of doing the job is reduced considering this overhead.
 
 The formula is
 
     1/N - (1/N) * STRIKE_LEADING_OVERHEAD
 
-Assuming a 10% of overhead for being a leader and 5 nodes the probabilty
+Assuming a 10% overhead for being a leader and 5 nodes, the probability
 for the leader to take a calculation would be 18% so 2% as leader job,
-probalbly not enough that why they burnout ;)
+probably not enough, that's why they burn out ;)
 
-How the work is delegated to the other workers is controled by
-`STRIKE_ALGORITHM` envvar bein possible 3 algorithims:
+How the work is delegated to the other workers is controlled by
+the `STRIKE_ALGORITHM` envvar, with 3 possible algorithms:
 
-- `random`: just as random as it sound
+- `random`: just as random as it sounds
 - `robust`: preference for reliable workers that failed less
-- `fastest`: preferece for faster workers 
+- `fastest`: preference for faster workers
 
-Both `robust` and `fastest` uses statistics stored on Redis to have
+Both `robust` and `fastest` use statistics stored in Redis to get
 the values.
 
-The nodes register themselfs at the etcd when staring up so the system
+The nodes register themselves in etcd when starting up so the system
 auto-scales. 
 
-Leaders burnsout forcing a new leader to be elected.
+Leaders burn out, forcing a new leader to be elected.
 
-Workers go on strike provking the leader leader to fail and taking that into
-acount agains their robustness that may be relevant if is the sued algorithm.
+Workers go on strike provoking the leader to fail and taking that into
+account against their robustness, which may be relevant if it is the used algorithm.
 
-A caos monkey is implemented to push workers into strike.
+A chaos monkey is implemented to push workers into strike.
 
 
 ### Leadership election on etcd
@@ -199,27 +199,27 @@ usually shows a handful of teapots (the seconds where the old leader answers
 The delegation algorithm changes the failure profile of the same 30s run
 (same chaos, ~1300 requests):
 
-## Intresting future works
+## Interesting future works
 
-Would be great do play and do simulations to see wich delegation algorithm
-works best on different parameters and caos situations.
+It would be great to play and do simulations to see which delegation algorithm
+works best on different parameters and chaos situations.
 
 
 ## AI usage
 
-As I had to miss some clases about the topic I've followed a different
-approach as previus assingments. In this one I've tried to promt what
-I wanted giving access to the lessons to the AI agent and it implemented
-crucial modifications of sac-restad to be distributed as well as configuring etcd.
+As I had to miss some classes about the topic, I've followed a different
+approach than previous assignments. In this one I've tried to prompt what
+I wanted, giving the AI agent access to the lessons, and it implemented
+crucial modifications to sac-restad to make it distributed, as well as configuring etcd.
 
-The used prompts can be found at PROMPT.md
+The used prompts can be found in PROMPT.md
 
-Initially this README as AI generated but I've rewritten it to be simplified
-and the AI gammar corrected.
+Initially this README was AI generated but I've rewritten it to be simplified
+and the AI grammar corrected.
 
 ### Models & tools
 
 - GLM-5.3-Flash (opencode): Plan and implement the whole sac-strike
   assignment (etcdapi.py, the strike mode of app.py, docker-compose.yml,
-  strike-demo and the READMEs of both repositories) also needed modificatios
-  on sac-restad.
+  strike-demo and the READMEs of both repositories), also needed modifications
+  to sac-restad.
