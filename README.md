@@ -3,9 +3,13 @@
 Send calculations, caculators will elect a lead that will lead by example
 doing the work as well as delegating part of it.
 
-Leaders burn out so they step down. Sometimes other calculators also
-go on strike to have a tea.
+Leaders burnout so they step down and a new leader is elected.
+Sometimes other calculators also step down going on strike and have a tea.
 
+Alegory of how IT companies works, leading usually does not releaf you for
+your revious dutties so you burn out. When delegation fasters workers
+trend to be punished with more work and also any leaders knows when a
+reliable work need to be done who is the right candidate.
 
 ## Abstract
 
@@ -14,7 +18,7 @@ An exercice of a distributed system based on the rest calculator
 modified to be used also as a distributed system.
 
 This repo [sac-strike](https://github.com/uib-gin3/sac-strike) deploys
-sac-restad in a distributed way. Also includes scripts to test it mostly
+sac-restad in a distributed way. Also includes scripts to test it, mostly
 vibe-coded.
 
 ## Assignment
@@ -44,21 +48,16 @@ vibe-coded.
 ## Setup
 
 Tested on Debian 13 with Docker 29.9.0 and the compose plugin. It should
-just need bash, Docker, Docker Compose and python3 (stdlib only).
+just need bash, git, Docker, Docker Compose and python3 (stdlib only).
 
     git clone https://github.com/uib-gin3/sac-strike
     cd sac-strike
 
 ## Usage
 
-### Simple test
+### Full assisted test (recommended way)
 
-
-
-
-### Full assisted test
-
-The easy way is to use.
+There is the script `strike-demo` that runs a full demo of 1 minute.
 
     ./strike-demo
 
@@ -70,18 +69,46 @@ tears the workforce down.
 It has interesting defaults but accepts parameters like `-c 5 -r 3 -d 60`
 that would do 5 clients, 3 ops/s each, 60 seconds.
 
+
+### Simple test
+
+Start the workers (like a `docker compose up` with some asteriods)
+
+    ./strike-up
+
+Wait for a leader to be elected, returns when ready
+
+    ./strike-ready
+
+Test a calculation `strike-leader` returns the enpoint then curl it.
+
+    ID=$(curl -s -X POST $(./strike-leader)/calc --data-binary 3,4,5,6)
+    curl -v $(./strike-leader)/calc/$ID/add
+    # X-Lead-By: node2         the leader that orchestrated
+    # X-Calculated-By: node5   the node that computed
+    # 18
+
+There is also a python client to avoid using curl
+
+    ./strike-client -v -o add 3 4 5 6
+
+To know who is the current leader
+
+    docker compose exec etcd etcdctl get strike/leader --print-value-only
+
+
 ### Using it manually
 
 Unix style: every tool is useful on its own, open a few terminals and
 mix them as you like.
 
-    ./strike-up                      # the workforce up, metrics fresh
-    ./strike-ready                   # every node healthy, a leader elected
+    ./strike-up                      # start the workforce
+    ./strike-ready                   # waits until a leader is elected and ready
     ./strike-leader                  # where to send requests: the leader's base URL
     ./strike-load -c 5 -r 3 -d 60    # the users: load and the client report
     ./strike-chaos -d 60             # the agitator: random strikes
-    ./strike-watch                   # the storyteller: narrates forever
-    ./strike-summary -d 60           # the ledger: what redis recorded
+    ./strike-watch                   # the storyteller: tells what is happening
+    ./strike-summary -d 60           # Show what appended reading stats
     ./strike-client -o add 3 4 5     # one operation, leader auto-discovered
     docker compose down              # stops everything
 
@@ -91,231 +118,106 @@ themselves). strike-load keeps its simulated users as internal threads,
 just like restad-bench does. (This idea and paragraph was IA generaged,
 I'm impressed!)
 
-### Using it manually and simple
-
-etcd holds the leadership in the `strike/leader` key, with the endpoint
-of the leader, so asking etcd is enough:
-
-    docker compose exec etcd etcdctl get strike/leader --print-value-only
-    # http://node2:12345
-
-`strike-leader` turns that into a base URL for the host (the compose
-maps nodeN to 12345+N-1) and retries the sub-second gaps. Inline the
-discovery in every command: if the leader changes (or dies) between
-commands, each one finds whoever leads at that moment, and the calculus
-survives it anyway (sessions live in shared redis, any node can serve
-any calculus):
-
-    ID=$(curl -s -X POST $(./strike-leader)/calc --data-binary 3,4,5,6)
-    curl -v $(./strike-leader)/calc/$ID/add
-    # X-Lead-By: node2         the leader that orchestrated
-    # X-Calculated-By: node5   the node that computed
-    # 18
-
-    ./strike-leader --endpoint     # the raw endpoint etcd holds
-
-Or without curl at all, with the discovery built in:
-
-    ./strike-client -o add 3 4 5
-    ./strike-client -o mean 1 2 3 4
-    ./strike-client -v -o sqrt 49
-
-The leader is always there, even on a workforce nobody is talking to: a
-guardian thread in every node repeats the keepalive pass every TTL/3,
-so memberships stay fresh, the leadership is renewed (or claimed by the
-next node when the leader dies or burns out) and the burnout countdowns
-fire on time with zero traffic. Watch it churn:
-
-    watch -n 1 'docker compose exec etcd etcdctl get strike/leader --print-value-only'
-
-Only the sub-second gaps between a lease expiring and the next claim
-are leaderless; strike-leader and strike-client retry them for you.
-
-The delegation behaviour is tuned with environment variables (see the
-table in the sac-restad README), compose gives them defaults that can be
-overridden, for example:
-
-    STRIKE_ALGORITHM=robust docker compose up -d --build
-
-There is no colleague list to configure: every node registers itself in
-etcd and the workforce is whatever etcd says it is.
-
-### What the demo tells
-
-    === The calculators' strike ===
-    starting the workforce: etcd + redis + 5 calculators (docker compose up -d --build)
-    [   4.3s] waiting for the nodes to be healthy...
-    [   5.9s] all 5 nodes are healthy
-    [   5.9s] we see node1 is elected leader
-    [   6.0s] the chaos monkey is loose: a strike every 4-9s
-    [   6.0s] sending load: 5 clients x 3.0 ops/s each (total 15.0 ops/s) for 60s
-    [  11.0s]   77 ops in  5.0s (  15.4 ops/s) reqs=231 teapots=0 errors=0
-    [  14.4s] the chaos monkey sends node1 on strike (on strike for 2.3s)
-    [  14.8s] the leader (node1) is gone, electing a new one...
-    [  15.3s] we see node2 is elected leader
-    [  28.3s] node2: burned out (burned out for 2.5s)
-    [  28.9s] we see node1 is elected leader
-    ...
-    [  64.5s] the storyteller goes home
-    [  64.7s] the chaos monkey is done: 8 strikes
-
-    === what the clients saw ===
-    duration        : 60.0s
-    offered (approx): 901 ops (5 clients x 3.0 ops/s each)
-    served          : 847 ops / 2556 reqs
-    teapots (418)   : 15
-    errors          : 0 (4xx: 0, 5xx: 0, conn: 0)
-    latency         : avg=7.3ms p50=6.1ms p95=14.6ms p99=19.0ms max=27.5ms
-    client view (X-Calculated-By): node1: 211, node2: 197, node3: 114, ...
-
-    === what the workforce recorded ===
-    duration        : 60.0s
-    leader handled  : 2541 reqs (self: 460 = 18.1%, delegated: 2081 = 81.9%)
-    orphans (503)   : 0
-    strikes suffered: 8
-
-    per node (every request as the leader recorded it):
-    node        ok   fail  avg_ms  strikes  burnouts  leading  leader%
-    node1      672     39     1.7        1         1    27.9s    46.5%
-    node2      579     91     1.8        1         2    18.0s    30.0%
-    ...
-
-    leader timeline:
-      [   5.0s -   14.4s] node1
-      [  14.8s -   28.1s] node2
-      ...
-
-
-## How it works
-
-- **Leader election (etcd)**: two etcd key families hold the whole shared
-  state, both attached to leases. Every node registers itself under
-  `strike/workforce/<hostname>` with its endpoint, and the leadership is
-  the single key `strike/leader`, holding the endpoint of the leader too
-  (the same format, so a client can use it as its base URL). Requests
-  drive the decisions: every request runs one keepalive pass that
-  re-asserts membership and asks etcd who leads; a leaderless workforce
-  elects a leader on the next pass (compare-and-swap), the leader renews
-  its lease while requests come, a struck or burned out leader steps
-  down the moment a pass finds it, and if a leader simply dies its lease
-  expires and the next pass elects somebody else. And because silence
-  kills leases, every node also runs a guardian thread repeating the
-  same pass every TTL/3: the state in etcd never goes dark, there is
-  (almost) always a leader even when nobody is talking to the workforce,
-  and the burnout countdowns fire on time. A quiet node never drops out
-  of the delegation pool anymore. etcd is both the truth about who leads
-  and the service discovery the workload uses to find the leader.
-- **Delegation (sac-restad)**: every calculation route of sac-restad is
-  wrapped in a `distributed` decorator. Non-leader nodes always compute
-  themselves; the leader computes itself with probability
-  `1/N - (1/N)·STRIKE_LEADING_OVERHEAD` (N = workforce size; 0.18 with 5
-  nodes and an overhead of 0.1) and delegates the rest, retrying up to 5
-  times with a different colleague on every failure. Three algorithms
-  choose the colleague: `random`, `robust` (fewest failures) and `fastest`
-  (lowest average response time).
-- **Strikes and burnouts**: `POST /strike` sends a node on strike for a
-  random window (`STRIKE_MIN_TIME..STRIKE_MAX_TIME`): it answers 418 I'm a
-  teapot to every calculation and, if it was leading, deletes the leader
-  key right away. Every newly elected leader starts a countdown of random
-  `STRIKE_BURNOUT_MIN_TIME..STRIKE_BURNOUT_MAX_TIME`: when it fires the
-  node also goes 418 for a window just like a strike, and it recovers as a
-  plain node, having lost the leadership. `GET /health` always answers,
-  with 200 or 418 and the reason in the body.
-- **Metrics (redis)**: the leader records who responded, how long it took
-  and whether it failed (`strike:ok:<node>`, `strike:fail:<node>`,
-  `strike:time:<node>`), the totals (`strike:self`, `strike:delegated`) and
-  a `strike:events` log with the elections, strikes, burnouts and
-  delegation failures. The per-node counters also feed the robust and
-  fastest algorithms; the event log feeds the leader timeline of the
-  summary.
-- **Signatures**: every response carries `X-Calculated-By` (the hostname
-  of the node that computed) and `X-Lead-By` (the leader that
-  orchestrated, when there was one), so a delegated answer shows both
-  actors.
-
-The containers: one per calculator node, plus one for etcd and one for
-redis. Ports on the host: nodes on 12345..12349, etcd on 2379, redis on
-6379.
-
-
 ## Design decisions
 
-Reusing sac-restad as the calculator (instead of writing a new one) keeps
-the assignment honest: the calculator already worked, the interesting part
-is what surrounds it. Its own docker-compose stays untouched; the workforce
-lives here.
+Use sac-restad as a base and extend it to be usable as a distributed system
+when `` environment variables are present, that way si still compatible
+witht the previous use.
 
-One etcd key per node (its workforce entry) plus one leader key, all with
-leases, are the smallest election and service discovery that can be
-explained in a sentence. Raft is inside etcd, not inside this repo.
+Use etcd because is industry standard, high performance and Go developed
+wich I prefer over any clucky Java thing.
 
-There is no management loop doing decisions: requests run the keepalive
-pass and decide from fresh etcd reads. The only background thread is
-the guardian, which repeats the very same pass in the silence so the
-etcd state never goes dark. The trade-off is honest: during the
-sub-second gaps between a lease expiring and the next claim there is no
-leader, and an etcd outage longer than two beats drops the leadership
-until etcd is back. In exchange the countdowns fire by the clock, the
-idle workforce keeps churning leaders like the assignment describes,
-and there is always an endpoint to find at etcd.
+Minimizing single points of failure that a proxy would introduce,
+that is why there is an script that composes the enpoint to use
+(`strike-leader`) taking it from etcd (wich is a SPOF itself).
 
-The strike/leader state lives in the process memory, so the gunicorn
-deployment is one worker with 8 threads (`--workers 1 --threads 8`)
-instead of four sync workers: same API, state that does not need
-synchronising inside the container.
+As the client is not inside docker using ports as routing element so the client
+can be outside the docker. On a real distributed system DNS would be used.
 
-The demo is not one program with threads for everything; it is a
-handful of single-purpose commands and a thin shell composition. Every tool is
-useful alone (load in one terminal, the storyteller in another), they
-share no state (the clients' report is strike-load's, the workforce's
-record is strike-summary's, straight from redis) and the only thing
-strike-demo adds is the order and one shared clock, `STRIKE_T0`.
+Using Redis as cache, in this case it could be conidered a SPOF but
+it could also be deployed distrubuted but I did not want to overcomplicate
+the assingement with it.
 
-Sessions were already in shared Redis, so a delegated `POST /calc` can
-land on any node: there is no affinity to break.
+Also redis is used to keep statistics.
 
-The workload does not retry: a teapot during a leadership transition is
-honestly counted, which is exactly what the assignment wants to see
-(requests offered versus answered).
+It would had also been possible to use `etcd` as key-value storage 
+and avoid using Redis but I like the idea of keeping `etcd` usage
+as minimal as possible as it is critical.
 
-The chaos monkey only strikes. Killing containers would be a nice extra,
-but strikes already trigger step-downs and re-elections, which is the
-interesting part.
+Is true that there can be a gap between asking for the leader and 
+sending the request. If done manually can fail that's why there is
+`strike-client` that handles those errors and retries.
 
+The leader does some part of the job and delegate other. The propition
+of how much calculations are done by the leader vs the delegate ones
+are controled by the STRIKE_LEADING_OVERHEAD envvar. The idea is to 
+distribute evenly the workload across all the nodes incluing the leader
+but as the leader has come overhead coorinating reduce the probability
+of doint the job considering this overhead.
+
+The formula is
+
+    1/N - (1/N) * STRIKE_LEADING_OVERHEAD
+
+Assuming a 10% of overhead for being a leader and 5 nodes the probabilty
+for the leader to take a calculation would be 18% so 2% as leader job,
+probalbly not enough that why they burnout ;)
+
+How the work is delegated to the other workers is controled by
+`STRIKE_ALGORITHM` envvar bein possible 3 algorithims:
+
+- `random`: just as random as it sound
+- `robust`: preference for reliable workers that failed less
+- `fastest`: preferece for faster workers 
+
+Both `robust` and `fastest` uses statistics stored on Redis to have
+the values.
+
+The nodes register themselfs at the etcd when staring up so the system
+auto-scales. 
+
+Leaders burnsout forcing a new leader to be elected.
+
+Workers go on strike provking the leader leader to fail and taking that into
+acount agains their robustness that may be relevant if is the sued algorithm.
+
+A caos monkey is implemented to push workers into strike.
+
+
+### Leadership election on etcd
+
+TODO
 
 ## Observations
 
-The demo is deterministic-ish in its drama: with the default 2-6s strikes
-every 4-9s and 8-20s burnout countdowns, expect roughly one leadership
-transition every ~10s and a node on strike ~25% of the time. The 5-retry
-delegation absorbs most of it: the summary usually shows a handful of
-teapots (the seconds where the old leader answers 418 before etcd has a
-new leader) and very few 5xx.
+With the default 2-6s strikes every 4-9s and 8-20s burnout countdowns,
+expect roughly one leadership transition every ~10s and a node on strike
+~25% of the time. The 5-retry delegation absorbs most of it: the summary
+usually shows a handful of teapots (the seconds where the old leader answers
+418 before etcd has a new leader) and very few 5xx.
 
 The delegation algorithm changes the failure profile of the same 30s run
 (same chaos, ~1300 requests):
 
-| algorithm | per-node failures | what happens |
-|-----------|------------------:|--------------|
-| random    | ~80 per struck node | spreads the damage around |
-| robust    | ~1-4 per node | stops delegating to whoever fails, the struck node starves |
-| fastest   | up to 240 on one node | concentrates on the historically quickest node, even while it is on strike: its success-only average looks great |
+## Intresting future works
 
-`fastest` reads averages of successful answers, so a node that is quick
-when up stays attractive while it is down and the retries pay the bill.
-Robust is the boring one that never hurts the clients; random is the
-fair one. Pick your poison with STRIKE_ALGORITHM.
-
-See the sac-restad README for the calculator side.
+Would be great do play and do simulations to see wich delegation algorithm
+works best on different parameters and caos situations.
 
 
 ## AI usage
 
-None of the text intended to be read by a human has been generated by an
-AI tool, whereas most of the text (code) intended to be processed by a
-machine has been generated by AI Agents (OpenCode).
+As I had to miss some clases about the topic I've followed a different
+approach as previus assingments. In this one I've tried to promt what
+I wanted giving access to the lessons to the AI agent and it implemented
+crucial modifications of sac-restad to be distributed as well as configuring etcd.
 
-This approach is to avoid being a [meat proxy](https://gruhn.me/blog/2026-08-03/).
+The used prompts can be found at PROMPT.md
+
+Initially this README as AI generated but I've rewritten it to be simplified
+and the AI gammar corrected.
+
+### Models & tools
 
 - GLM-5.3-Flash (opencode): Plan and implement the whole sac-strike
   assignment (etcdapi.py, the strike mode of app.py, docker-compose.yml,
