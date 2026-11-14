@@ -165,7 +165,7 @@ The formula is
     1/N - (1/N) * STRIKE_LEADING_OVERHEAD
 
 Assuming a 10% overhead for being a leader and 5 nodes, the probability
-for the leader to take a calculation would be 18% so 2% as leader job,
+for the leader to take a calculation would be 18% leaving 10% as leader job,
 probably not enough, that's why they burn out ;)
 
 How the work is delegated to the other workers is controlled by
@@ -201,7 +201,7 @@ a race, the losers just try again on the next beat.
 
 Claims and renewals are compare-and-swaps. A node that finds the key free
 puts its endpoint only if the key does not exist yet, so of all the nodes
-racing exactly one wins. Is etcd who decides who win.
+racing exactly one wins. It is etcd who decides who wins.
 
 While leading, the node renews the lease every TTL/3 with a second
 compare-and-swap that only succeeds while the value is still its own endpoint:
@@ -210,10 +210,10 @@ away; a lost renewal means another node owns the key already, so it just steps
 down.
 
 Every request runs one pass of the described system but if there are no requests
-there is a thread (guardian) that keeps beating when there is no traffic, so a 
-there is always an elected leader to send traffic to.
+there is a thread (guardian) that keeps beating when there is no traffic, to 
+maximize the time that there is an elected leader even when no traffic.
 
-There are more details within the [app.py sourcecode of sac-restad](https://github.com/uib-gin3/sac-restad/blob/636b83c1c96410677776161b8ffce022eb82784f/app.py#L163).
+There are more details in the [app.py source code of sac-restad](https://github.com/uib-gin3/sac-restad/blob/636b83c1c96410677776161b8ffce022eb82784f/app.py#L163).
 
 ## Observations
 
