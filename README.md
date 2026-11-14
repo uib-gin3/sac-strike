@@ -69,6 +69,11 @@ tears the workforce down.
 It has interesting defaults but accepts parameters like `-c 5 -r 3 -d 60`
 that would do 5 clients, 3 ops/s each, 60 seconds.
 
+A log of an example of the execution can be found at:
+
+
+    cat strike-demo.log
+
 
 ### Simple test
 

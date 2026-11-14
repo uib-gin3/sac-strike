@@ -1,0 +1,109 @@
+[+] up 12/12
+ ✔ Image sac-strike-node4       Built                                                                                                    3.7s
+ ✔ Image sac-strike-node5       Built                                                                                                    3.7s
+ ✔ Image sac-strike-node1       Built                                                                                                    3.7s
+ ✔ Image sac-strike-node2       Built                                                                                                    3.7s
+ ✔ Image sac-strike-node3       Built                                                                                                    3.7s
+ ✔ Container sac-strike-redis-1 Running                                                                                                  0.0s
+ ✔ Container sac-strike-node1-1 Running                                                                                                  0.0s
+ ✔ Container sac-strike-node2-1 Running                                                                                                  0.0s
+ ✔ Container sac-strike-node3-1 Running                                                                                                  0.0s
+ ✔ Container sac-strike-node4-1 Running                                                                                                  0.0s
+ ✔ Container sac-strike-node5-1 Running                                                                                                  0.0s
+ ✔ Container sac-strike-etcd-1  Running                                                                                                  0.0s
+[   4.0s] waiting for the nodes to be healthy...
+[   4.1s] all 5 nodes are healthy
+[   4.1s] we see node1 is elected leader
+[   4.1s] the workforce is ready
+[   4.1s] the chaos monkey is loose: a strike every 4-9s
+[   4.1s] sending load: 5 clients x 3.0 ops/s each (total 15.0 ops/s) for 60s
+[   5.7s] the leader (node1) is gone, electing a new one...
+[   5.7s] node1: burned out (burned out for 2.4s)
+[   6.2s] we see node2 is elected leader
+[   8.3s] node1: healthy (healthy, leader: node2)
+[   9.1s]   75 ops in  5.0s (  15.0 ops/s) reqs=233 teapots=7 errors=0
+[  11.3s] the chaos monkey sends node2 on strike (on strike for 3.3s)
+[  11.4s] the leader (node2) is gone, electing a new one...
+[  11.9s] we see node1 is elected leader
+[  14.1s]   71 ops in  5.0s (  14.2 ops/s) reqs=450 teapots=11 errors=0
+[  15.0s] node2: healthy (healthy, leader: node1)
+[  17.6s] the chaos monkey sends node4 on strike (on strike for 4.2s)
+[  19.1s]   79 ops in  5.0s (  15.8 ops/s) reqs=686 teapots=11 errors=0
+[  21.7s] the chaos monkey sends node1 on strike (on strike for 4.5s)
+[  21.7s] the leader (node1) is gone, electing a new one...
+[  22.2s] we see node2 is elected leader
+[  22.2s] node4: healthy (healthy, leader: node2)
+[  24.1s]   68 ops in  5.0s (  13.6 ops/s) reqs=892 teapots=13 errors=0
+[  26.3s] node1: healthy (healthy, leader: node2)
+[  29.1s]   82 ops in  5.0s (  16.4 ops/s) reqs=1138 teapots=13 errors=0
+[  29.7s] the chaos monkey sends node5 on strike (on strike for 4.1s)
+[  32.0s] we see node3 is elected leader
+[  32.0s] node2: burned out (burned out for 2.7s)
+[  34.1s] node5: healthy (healthy, leader: node3)
+[  34.1s]   65 ops in  5.0s (  13.0 ops/s) reqs=1334 teapots=14 errors=0
+[  35.1s] node2: healthy (healthy, leader: node3)
+[  36.9s] the chaos monkey sends node2 on strike (on strike for 5.3s)
+[  39.1s]   65 ops in  5.0s (  13.0 ops/s) reqs=1529 teapots=14 errors=0
+[  41.3s] the leader (node3) is gone, electing a new one...
+[  41.3s] node3: burned out (burned out for 3.8s)
+[  41.8s] we see node1 is elected leader
+[  42.3s] node2: healthy (healthy, leader: node1)
+[  43.5s] the chaos monkey sends node1 on strike (on strike for 2.7s)
+[  43.9s] we see node4 is elected leader
+[  44.1s]   64 ops in  5.0s (  12.8 ops/s) reqs=1728 teapots=22 errors=0
+[  45.4s] node3: healthy (healthy, leader: node4)
+[  46.5s] node1: healthy (healthy, leader: node4)
+[  48.7s] the chaos monkey sends node5 on strike (on strike for 5.8s)
+[  49.1s]   73 ops in  5.0s (  14.6 ops/s) reqs=1948 teapots=22 errors=0
+[  53.2s] we see node3 is elected leader
+[  53.2s] node4: burned out (burned out for 3.1s)
+[  54.1s]   70 ops in  5.0s (  14.0 ops/s) reqs=2158 teapots=23 errors=0
+[  54.7s] node5: healthy (healthy, leader: node3)
+[  56.6s] the chaos monkey sends node5 on strike (on strike for 3.9s)
+[  56.8s] node4: healthy (healthy, leader: node3)
+[  59.1s]   60 ops in  5.0s (  12.0 ops/s) reqs=2338 teapots=23 errors=0
+[  60.9s] node5: healthy (healthy, leader: node3)
+[  62.8s] the chaos monkey sends node4 on strike (on strike for 5.6s)
+[  64.1s] the chaos monkey is done: 9 strikes
+
+=== what the clients saw ===
+duration        : 60.1s
+offered (approx): 901 ops (5 clients x 3.0 ops/s each)
+served          : 854 ops / 2584 reqs
+teapots (418)   : 23
+errors          : 0 (4xx: 0, 5xx: 0, conn: 0)
+latency         : avg=6.8ms p50=6.3ms p95=11.4ms p99=15.3ms max=31.8ms
+client view (X-Calculated-By): node1: 167, node2: 181, node3: 196, node4: 167, node5: 143
+[  64.5s] the storyteller goes home
+
+=== what the workforce recorded ===
+duration        : 60.0s
+leader handled  : 2561 reqs (self: 443 = 17.3%, delegated: 2118 = 82.7%)
+orphans (503)   : 0
+strikes suffered: 9
+
+per node (every request as the leader recorded it):
+node         ok   fail  avg_ms  strikes  burnouts  leading  leader%
+node1       534     75     2.1        2         1    12.5s    20.8%
+node2       522     86     2.0        2         1    15.5s    25.8%
+node3       608     40     2.0        0         1    16.5s    27.5%
+node4       499     65     2.1        2         1     9.4s    15.6%
+node5       398     98     2.6        3         0     0.0s     0.0%
+
+leader timeline:
+  [   5.7s -   11.2s] node2
+  [  11.4s -   21.7s] node1
+  [  21.7s -   31.6s] node2
+  [  31.6s -   41.0s] node3
+  [  41.3s -   43.5s] node1
+  [  43.5s -   52.9s] node4
+  [  52.9s -   60.0s] node3
+[+] down 8/8
+ ✔ Container sac-strike-node2-1 Removed                                                                                                  0.8s
+ ✔ Container sac-strike-node4-1 Removed                                                                                                  0.7s
+ ✔ Container sac-strike-node5-1 Removed                                                                                                  1.0s
+ ✔ Container sac-strike-node3-1 Removed                                                                                                  1.0s
+ ✔ Container sac-strike-node1-1 Removed                                                                                                  0.6s
+ ✔ Container sac-strike-redis-1 Removed                                                                                                  0.4s
+ ✔ Container sac-strike-etcd-1  Removed                                                                                                  0.3s
+ ✔ Network sac-strike_default   Removed
